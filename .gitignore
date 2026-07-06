@@ -6,3 +6,9 @@ tools
 bin/
 coverage.*
 docs/evidence
+
+# Tool-generated atomic-write backups (for example, config.go.123456789).
+*.go.[0-9]*
+*.log
+*.dump
+erl_crash.dump
