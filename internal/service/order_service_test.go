@@ -8,6 +8,7 @@ import (
 	"go-order-management-system/internal/service"
 	"sync"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -141,6 +142,13 @@ func TestCreateOrder_MultipleItemsSecondInsufficient_Rollback(t *testing.T) {
 	if stockLogCount != 0 {
 		t.Fatalf("expected no stock log committed after rollback, got %d", stockLogCount)
 	}
+	var outboxCount int64
+	if err := testDB.Model(&model.OrderTimeoutOutbox{}).Count(&outboxCount).Error; err != nil {
+		t.Fatalf("count order timeout outbox failed: %v", err)
+	}
+	if outboxCount != 0 {
+		t.Fatalf("expected no timeout event committed after rollback, got %d", outboxCount)
+	}
 }
 
 func TestCreateOrder_Success(t *testing.T) {
@@ -163,6 +171,9 @@ func TestCreateOrder_Success(t *testing.T) {
 	}
 	if order.Status != model.OrderStatusPending {
 		t.Fatalf("unexpected order status: %d", order.Status)
+	}
+	if order.CreatedAt.IsZero() {
+		t.Fatal("order created_at must be populated before scheduling timeout")
 	}
 
 	var inv model.Inventory
@@ -189,6 +200,86 @@ func TestCreateOrder_Success(t *testing.T) {
 	beforeQuantity := stockLog.AfterQuantity + (-stockLog.ChangeQuantity)
 	if beforeQuantity != 10 {
 		t.Fatalf("expected before quantity = 10, got %d", beforeQuantity)
+	}
+
+	var outbox model.OrderTimeoutOutbox
+	if err := testDB.Where("order_id = ?", order.ID).First(&outbox).Error; err != nil {
+		t.Fatalf("query order timeout outbox: %v", err)
+	}
+	if outbox.UserID != testUserID || outbox.EventID == "" {
+		t.Fatalf("unexpected order timeout outbox: %+v", outbox)
+	}
+	if delta := outbox.TimeoutAt.Sub(order.CreatedAt); delta < 30*time.Minute-time.Millisecond || delta > 30*time.Minute+time.Millisecond {
+		t.Fatalf("order timeout delay=%s want approximately %s", delta, 30*time.Minute)
+	}
+}
+
+func TestCancelExpiredOrder_CancelsPendingOrderIdempotently(t *testing.T) {
+	testDB, orderSvc := newOrderService(t)
+	ctx := seedPendingOrderContext(t, testDB)
+	var outbox model.OrderTimeoutOutbox
+	if err := testDB.Where("order_id = ?", ctx.Order.ID).First(&outbox).Error; err != nil {
+		t.Fatalf("query timeout outbox: %v", err)
+	}
+
+	if err := orderSvc.CancelExpiredOrder(context.Background(), outbox.EventID, ctx.Order.ID); err == nil {
+		t.Fatal("CancelExpiredOrder must reject an event before its database deadline")
+	}
+	if err := testDB.Model(&outbox).Update("timeout_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatalf("expire timeout outbox: %v", err)
+	}
+	if err := orderSvc.CancelExpiredOrder(context.Background(), outbox.EventID, ctx.Order.ID); err != nil {
+		t.Fatalf("CancelExpiredOrder: %v", err)
+	}
+	if err := orderSvc.CancelExpiredOrder(context.Background(), outbox.EventID, ctx.Order.ID); err != nil {
+		t.Fatalf("idempotent CancelExpiredOrder: %v", err)
+	}
+
+	var order model.Order
+	if err := testDB.First(&order, ctx.Order.ID).Error; err != nil {
+		t.Fatalf("query expired order: %v", err)
+	}
+	if order.Status != model.OrderStatusCancelled || order.CancelledAt == nil {
+		t.Fatalf("expired order not cancelled: %+v", order)
+	}
+	var inventory model.Inventory
+	if err := testDB.Where("product_id = ?", ctx.Product.ID).First(&inventory).Error; err != nil {
+		t.Fatalf("query restored inventory: %v", err)
+	}
+	if inventory.StockQuantity != ctx.InitQty {
+		t.Fatalf("inventory=%d want=%d", inventory.StockQuantity, ctx.InitQty)
+	}
+	var rollbackCount int64
+	if err := testDB.Model(&model.StockLog{}).
+		Where("biz_id = ? AND biz_type = ?", ctx.Order.ID, model.StockBizOrderRollback).
+		Count(&rollbackCount).Error; err != nil {
+		t.Fatalf("count timeout rollback logs: %v", err)
+	}
+	if rollbackCount != 1 {
+		t.Fatalf("rollback logs=%d want=1", rollbackCount)
+	}
+}
+
+func TestCancelExpiredOrder_DoesNotCancelPaidOrder(t *testing.T) {
+	testDB, orderSvc := newOrderService(t)
+	order := seedPaidOrder(t, testDB)
+	var outbox model.OrderTimeoutOutbox
+	if err := testDB.Where("order_id = ?", order.ID).First(&outbox).Error; err != nil {
+		t.Fatalf("query paid order timeout outbox: %v", err)
+	}
+	if err := testDB.Model(&outbox).Update("timeout_at", time.Now().Add(-time.Second)).Error; err != nil {
+		t.Fatalf("expire paid order timeout outbox: %v", err)
+	}
+
+	if err := orderSvc.CancelExpiredOrder(context.Background(), outbox.EventID, order.ID); err != nil {
+		t.Fatalf("CancelExpiredOrder paid order: %v", err)
+	}
+	var stored model.Order
+	if err := testDB.First(&stored, order.ID).Error; err != nil {
+		t.Fatalf("query paid order: %v", err)
+	}
+	if stored.Status != model.OrderStatusPaid {
+		t.Fatalf("paid order status=%d want=%d", stored.Status, model.OrderStatusPaid)
 	}
 }
 
@@ -1064,6 +1155,13 @@ func TestCreateOrder_IdempotentReplayReturnsSameOrder(t *testing.T) {
 	}
 	if record.Status != model.OrderAlreadyCreated || record.OrderID == nil || *record.OrderID != first.ID {
 		t.Fatalf("unexpected idempotency record: status=%d order_id=%v", record.Status, record.OrderID)
+	}
+	var timeoutEventCount int64
+	if err := testDB.Model(&model.OrderTimeoutOutbox{}).Where("order_id = ?", first.ID).Count(&timeoutEventCount).Error; err != nil {
+		t.Fatalf("count timeout events: %v", err)
+	}
+	if timeoutEventCount != 1 {
+		t.Fatalf("timeout events=%d want=1 after idempotent replay", timeoutEventCount)
 	}
 }
 

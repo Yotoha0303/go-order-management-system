@@ -8,6 +8,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 
 	"go-order-management-system/internal/dao"
 	"go-order-management-system/internal/model"
@@ -75,6 +76,7 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 			OrderNo:        generateOrderNo(),
 			TotalAmountFen: 0,
 			Status:         model.OrderStatusPending,
+			CreatedAt:      time.Now(),
 		}
 		if err := dao.CreateOrder(ctx, tx, order); err != nil {
 			return err
@@ -154,6 +156,17 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 		rowsAffected, err := dao.CompleteOrderIdempotencyKey(tx, ctx, userID, req.IdempotencyKey, order.ID)
 		if err != nil || rowsAffected != 1 {
 			return ErrOrderIdempotencyStateInvalid
+		}
+
+		timeoutAt := order.CreatedAt.Add(p.orderTimeout)
+		if err := dao.CreateOrderTimeoutOutbox(ctx, tx, &model.OrderTimeoutOutbox{
+			EventID:       uuid.NewString(),
+			OrderID:       order.ID,
+			UserID:        userID,
+			TimeoutAt:     timeoutAt,
+			NextAttemptAt: time.Now(),
+		}); err != nil {
+			return err
 		}
 
 		order.TotalAmountFen = totalAmountFen
@@ -261,50 +274,101 @@ func (p *OrderService) CancelOrder(ctx context.Context, userID, orderID int64) e
 			return ErrOrderCancelFailed
 		}
 
-		rows, err := dao.PatchOrderStatus(ctx, tx, userID, order.ID, model.OrderStatusPending, model.OrderStatusCancelled, "cancelled_at")
+		cancelled, err := cancelPendingOrder(ctx, tx, order, "取消订单回滚库存：")
 		if err != nil {
 			return err
 		}
-
-		if rows == 0 {
+		if !cancelled {
 			return ErrOrderCancelFailed
 		}
+		return nil
+	})
+}
 
-		items, err := dao.ListOrderItemsByOrderID(ctx, tx, order.ID)
+func (p *OrderService) CancelExpiredOrder(ctx context.Context, eventID string, orderID int64) error {
+	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		outbox, err := dao.GetOrderTimeoutOutbox(ctx, tx, eventID, orderID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
-
-		for _, item := range items {
-			inventory, err := dao.GetInventoryByProductIDForUpdate(ctx, tx, item.ProductID)
-			if err != nil {
-				return err
-			}
-
-			before := inventory.StockQuantity
-			after := before + item.Quantity
-
-			if err := dao.UpdateInventoryStockQuantity(ctx, tx, item.ProductID, after); err != nil {
-				return err
-			}
-
-			stockLog := &model.StockLog{
-				ProductID:      item.ProductID,
-				BizID:          &order.ID,
-				ChangeQuantity: item.Quantity,
-				AfterQuantity:  after,
-				BeforeQuantity: before,
-				BizType:        model.StockBizOrderRollback,
-				Remark:         "取消订单回滚库存：" + order.OrderNo,
-			}
-
-			if err := dao.CreateStockLog(ctx, tx, stockLog); err != nil {
-				return err
-			}
+		if time.Now().Before(outbox.TimeoutAt) {
+			return errors.New("order timeout deadline has not been reached")
 		}
 
-		return nil
+		order, err := dao.GetOrderByIDForSystem(ctx, tx, orderID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if order.Status != model.OrderStatusPending {
+			return nil
+		}
+
+		_, err = cancelPendingOrder(ctx, tx, order, "订单超时取消回滚库存：")
+		return err
 	})
+}
+
+func cancelPendingOrder(
+	ctx context.Context,
+	tx *gorm.DB,
+	order *model.Order,
+	remarkPrefix string,
+) (bool, error) {
+	rows, err := dao.PatchOrderStatus(
+		ctx,
+		tx,
+		order.UserID,
+		order.ID,
+		model.OrderStatusPending,
+		model.OrderStatusCancelled,
+		"cancelled_at",
+	)
+	if err != nil {
+		return false, err
+	}
+	if rows == 0 {
+		return false, nil
+	}
+
+	items, err := dao.ListOrderItemsByOrderID(ctx, tx, order.ID)
+	if err != nil {
+		return false, err
+	}
+
+	for _, item := range items {
+		inventory, err := dao.GetInventoryByProductIDForUpdate(ctx, tx, item.ProductID)
+		if err != nil {
+			return false, err
+		}
+
+		before := inventory.StockQuantity
+		after := before + item.Quantity
+
+		if err := dao.UpdateInventoryStockQuantity(ctx, tx, item.ProductID, after); err != nil {
+			return false, err
+		}
+
+		stockLog := &model.StockLog{
+			ProductID:      item.ProductID,
+			BizID:          &order.ID,
+			ChangeQuantity: item.Quantity,
+			AfterQuantity:  after,
+			BeforeQuantity: before,
+			BizType:        model.StockBizOrderRollback,
+			Remark:         remarkPrefix + order.OrderNo,
+		}
+
+		if err := dao.CreateStockLog(ctx, tx, stockLog); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func (p *OrderService) PayOrder(ctx context.Context, userID, orderID int64) error {

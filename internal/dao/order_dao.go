@@ -21,6 +21,11 @@ func GetOrderByID(ctx context.Context, db *gorm.DB, userID, id int64) (*model.Or
 	return &order, db.WithContext(ctx).Model(&order).Where("user_id = ? AND id = ?", userID, id).First(&order).Error
 }
 
+func GetOrderByIDForSystem(ctx context.Context, db *gorm.DB, id int64) (*model.Order, error) {
+	var order model.Order
+	return &order, db.WithContext(ctx).Where("id = ?", id).First(&order).Error
+}
+
 func ListOrders(ctx context.Context, db *gorm.DB, userID int64, pageSize, offset int) ([]*model.Order, int64, error) {
 	var orders []*model.Order
 	query := db.WithContext(ctx).Model(&model.Order{}).Where("user_id = ?", userID)
