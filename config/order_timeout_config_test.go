@@ -105,6 +105,15 @@ func TestLoadProjectConfigUsesNestedRabbitMQOrderTimeout(t *testing.T) {
 	if cfg.RabbitMQ.OrderTimeout.Delay != 30*time.Minute {
 		t.Fatalf("project order timeout delay=%s", cfg.RabbitMQ.OrderTimeout.Delay)
 	}
+	if !cfg.InventoryReconcile.Enabled {
+		t.Fatal("project inventory reconcile should be enabled")
+	}
+	if cfg.InventoryReconcile.Interval != 5*time.Minute {
+		t.Fatalf("project inventory reconcile interval=%s", cfg.InventoryReconcile.Interval)
+	}
+	if cfg.InventoryReconcile.Timeout != 3*time.Second {
+		t.Fatalf("project inventory reconcile timeout=%s", cfg.InventoryReconcile.Timeout)
+	}
 }
 
 func validRabbitMQConfig() RabbitMQConfig {

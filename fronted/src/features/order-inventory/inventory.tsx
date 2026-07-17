@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Search } from 'lucide-react'
+import { ListChecks, RefreshCw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -21,7 +21,7 @@ import {
 import { getErrorMessage, inventoryApi, productApi, queryKeys } from './api'
 import { BusinessPage, Field } from './components'
 import { formatDateTime } from './format'
-import type { Inventory } from './types'
+import type { Inventory, InventoryRedisReconcileResult } from './types'
 
 export function InventoryPage() {
   const queryClient = useQueryClient()
@@ -29,6 +29,8 @@ export function InventoryPage() {
   const [initQuantity, setInitQuantity] = useState('')
   const [addQuantity, setAddQuantity] = useState('')
   const [inventory, setInventory] = useState<Inventory | null>(null)
+  const [reconcileReport, setReconcileReport] =
+    useState<InventoryRedisReconcileResult | null>(null)
 
   const productsQuery = useQuery({
     queryKey: queryKeys.products('all'),
@@ -73,6 +75,24 @@ export function InventoryPage() {
         queryClient.invalidateQueries({ queryKey: queryKeys.stockLogsRoot }),
       ])
       lookupMutation.mutate(variables.product_id)
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+
+  const rebuildRedisMutation = useMutation({
+    mutationFn: inventoryApi.rebuildRedis,
+    onSuccess: (data) => {
+      toast.success(`Redis 库存已重建：${data.rebuild_count} 条`)
+      setReconcileReport(null)
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+
+  const reconcileRedisMutation = useMutation({
+    mutationFn: inventoryApi.reconcileRedis,
+    onSuccess: (data) => {
+      setReconcileReport(data)
+      toast.success(`Redis 库存对账完成：${data.diff_count} 条差异`)
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   })
@@ -190,6 +210,53 @@ export function InventoryPage() {
                   增加入库
                 </Button>
               </form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Redis 库存维护</CardTitle>
+              <CardDescription>按 MySQL 当前库存重建 Redis 可售库存。</CardDescription>
+            </CardHeader>
+            <CardContent className='space-y-3'>
+              <div className='grid gap-2 sm:grid-cols-2 xl:grid-cols-1'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  disabled={reconcileRedisMutation.isPending}
+                  onClick={() => reconcileRedisMutation.mutate()}
+                >
+                  <ListChecks />
+                  Redis 库存对账
+                </Button>
+                <Button
+                  type='button'
+                  variant='outline'
+                  disabled={rebuildRedisMutation.isPending}
+                  onClick={() => rebuildRedisMutation.mutate()}
+                >
+                  <RefreshCw />
+                  重建 Redis 库存
+                </Button>
+              </div>
+              {reconcileReport && (
+                <div className='rounded-md border p-3 text-sm'>
+                  <p className='font-medium'>
+                    已检查 {reconcileReport.checked_count} 条，差异{' '}
+                    {reconcileReport.diff_count} 条
+                  </p>
+                  {reconcileReport.items.length > 0 && (
+                    <div className='mt-2 space-y-1 text-muted-foreground'>
+                      {reconcileReport.items.slice(0, 5).map((item) => (
+                        <p key={item.product_id}>
+                          #{item.product_id} MySQL {item.mysql_quantity} / Redis{' '}
+                          {item.redis_quantity ?? '-'} ({item.status})
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

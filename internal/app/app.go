@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -19,14 +20,21 @@ func Run() error {
 	}
 
 	server := NewHTTPServer(deps)
-	workerCtx, stopWorker := context.WithCancel(context.Background())
-	workerDone := make(chan struct{})
-	go func() {
-		defer close(workerDone)
-		if err := deps.OrderTimeoutWorker.Run(workerCtx); err != nil {
-			logger.Error("order timeout worker stopped", "error", err)
-		}
-	}()
+	workerCtx, stopWorkers := context.WithCancel(context.Background())
+	var workerWG sync.WaitGroup
+	startWorker := func(name string, run func(context.Context) error) {
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
+			if err := run(workerCtx); err != nil {
+				logger.Error(name+" stopped", "error", err)
+			}
+		}()
+	}
+	startWorker("order timeout worker", deps.OrderTimeoutWorker.Run)
+	if deps.InventoryWorker != nil {
+		startWorker("inventory reconcile worker", deps.InventoryWorker.Run)
+	}
 
 	serverErr := make(chan error, 1)
 	go func() {
@@ -47,13 +55,18 @@ func Run() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stopWorker()
+	stopWorkers()
 
 	shutdownErr := server.Shutdown(ctx)
+	workerDone := make(chan struct{})
+	go func() {
+		workerWG.Wait()
+		close(workerDone)
+	}()
 	select {
 	case <-workerDone:
 	case <-ctx.Done():
-		logger.Warn("order timeout worker shutdown timed out")
+		logger.Warn("background worker shutdown timed out")
 	}
 	if runErr != nil {
 		return runErr

@@ -25,6 +25,23 @@ export type Inventory = {
   updated_at: string
 }
 
+export type InventoryRedisRebuildResult = {
+  rebuild_count: number
+}
+
+export type InventoryRedisReconcileItem = {
+  product_id: number
+  mysql_quantity: number
+  redis_quantity?: number | null
+  status: string
+}
+
+export type InventoryRedisReconcileResult = {
+  checked_count: number
+  diff_count: number
+  items: InventoryRedisReconcileItem[]
+}
+
 export type StockLog = {
   id: number
   product_id: number
@@ -35,6 +52,28 @@ export type StockLog = {
   biz_id?: number | null
   remark: string
   created_at: string
+}
+
+export type OperationLog = {
+  id: number
+  user_id: number
+  username: string
+  action: string
+  method: string
+  path: string
+  route: string
+  http_status: number
+  request_id: string
+  client_ip: string
+  user_agent: string
+  created_at: string
+}
+
+export type OperationLogList = {
+  operation_logs: OperationLog[]
+  total: number
+  page: number
+  page_size: number
 }
 
 export type Order = {

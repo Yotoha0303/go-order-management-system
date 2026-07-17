@@ -11,9 +11,12 @@ import type {
   CreateProductPayload,
   InitInventoryPayload,
   Inventory,
+  InventoryRedisReconcileResult,
+  InventoryRedisRebuildResult,
   Order,
   OrderDetail,
   OrderList,
+  OperationLogList,
   Product,
   ProductList,
   ProductListStatus,
@@ -32,6 +35,9 @@ export const queryKeys = {
   stockLogsRoot: ['stock-logs'] as const,
   stockLogs: (productId?: number) =>
     ['stock-logs', { productId: productId ?? null }] as const,
+  operationLogsRoot: ['operation-logs'] as const,
+  operationLogs: (page: number, pageSize: number) =>
+    ['operation-logs', { page, pageSize }] as const,
   ordersRoot: ['orders'] as const,
   orders: (page: number, pageSize: number) =>
     ['orders', { page, pageSize }] as const,
@@ -75,6 +81,18 @@ export const inventoryApi = {
     unwrap<Inventory>(
       api.get<ApiResponse<Inventory>>(`/inventory/products/${productId}`)
     ),
+  rebuildRedis: () =>
+    unwrap<InventoryRedisRebuildResult>(
+      api.post<ApiResponse<InventoryRedisRebuildResult>>(
+        '/inventory/redis/rebuild'
+      )
+    ),
+  reconcileRedis: () =>
+    unwrap<InventoryRedisReconcileResult>(
+      api.get<ApiResponse<InventoryRedisReconcileResult>>(
+        '/inventory/redis/reconcile'
+      )
+    ),
 }
 
 export const stockLogApi = {
@@ -82,6 +100,15 @@ export const stockLogApi = {
     unwrap<StockLog[]>(
       api.get<ApiResponse<StockLog[]>>('/stock-logs', {
         params: productId ? { product_id: productId } : undefined,
+      })
+    ),
+}
+
+export const operationLogApi = {
+  list: (page = 1, pageSize = 20) =>
+    unwrap<OperationLogList>(
+      api.get<ApiResponse<OperationLogList>>('/operation-logs', {
+        params: { page, page_size: pageSize },
       })
     ),
 }

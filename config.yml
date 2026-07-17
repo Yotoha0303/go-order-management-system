@@ -12,10 +12,17 @@ mysql:
   connMaxLifeTime: 30m
   connMaxIdleTime: 5m
   pingTimeout: 3s
+  slowThreshold: 200ms
+  logLevel: warn
 
 redis:
   addr: 127.0.0.1:6379
   db: 0
+
+inventoryReconcile:
+  enabled: true
+  interval: 5m
+  timeout: 3s
 
 rabbitmq:
   url: amqp://order_app:order_dev_password@127.0.0.1:5672/

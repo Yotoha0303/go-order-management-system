@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"strconv"
+	"time"
 )
 
 var (
@@ -22,6 +23,10 @@ var (
 	ErrMySQLInvalidConnMaxIdleTime        = errors.New("invalid mysql conn max idle time")
 	ErrMySQLInvalidConnMaxLifetime        = errors.New("invalid mysql conn max life time")
 	ErrMySQLInvalidPingTimeout            = errors.New("invalid mysql conn ping time out")
+	ErrMySQLInvalidSlowThreshold          = errors.New("invalid mysql slow threshold")
+	ErrMySQLInvalidLogLevel               = errors.New("invalid mysql log level")
+	ErrInvalidInventoryReconcileInterval  = errors.New("invalid inventory reconcile interval")
+	ErrInvalidInventoryReconcileTimeout   = errors.New("invalid inventory reconcile timeout")
 	ErrInvalidJWTExpireHours              = errors.New("invalid jwt expire hours")
 )
 
@@ -96,6 +101,16 @@ func (c Config) Validate() error {
 		return ErrMySQLInvalidPingTimeout
 	}
 
+	if mysql.SlowThreshold < 0 {
+		return ErrMySQLInvalidSlowThreshold
+	}
+
+	switch mysql.LogLevel {
+	case "", "silent", "error", "warn", "info":
+	default:
+		return ErrMySQLInvalidLogLevel
+	}
+
 	if jwt.ExpireHours <= 0 {
 		return ErrInvalidJWTExpireHours
 	}
@@ -104,5 +119,22 @@ func (c Config) Validate() error {
 		return err
 	}
 
+	if err := c.InventoryReconcile.Validate(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c InventoryReconcileConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.Interval <= 0 || c.Interval > 24*time.Hour {
+		return ErrInvalidInventoryReconcileInterval
+	}
+	if c.Timeout <= 0 || c.Timeout > c.Interval {
+		return ErrInvalidInventoryReconcileTimeout
+	}
 	return nil
 }

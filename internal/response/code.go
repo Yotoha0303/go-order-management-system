@@ -14,13 +14,15 @@ const (
 )
 
 const (
-	CodeInitInventoryExists      = 2001
-	CodeCreateStockLogFailed     = 2002
-	CodeInitInventoryFailed      = 2003
-	CodeInventoryInvalidQuantity = 2004
-	CodeInventoryNotFound        = 2005
-	CodeAddInventoryError        = 2006
-	CodeQueryInventoryFailed     = 2007
+	CodeInitInventoryExists           = 2001
+	CodeCreateStockLogFailed          = 2002
+	CodeInitInventoryFailed           = 2003
+	CodeInventoryInvalidQuantity      = 2004
+	CodeInventoryNotFound             = 2005
+	CodeAddInventoryError             = 2006
+	CodeQueryInventoryFailed          = 2007
+	CodeRebuildInventoryCacheFailed   = 2008
+	CodeReconcileInventoryCacheFailed = 2009
 )
 
 const (
@@ -82,4 +84,9 @@ const (
 	CodeUserRoleNotFound     = 8002
 	CodeCreateUserRoleFailed = 8003
 	CodePermissionDenied     = 8004
+)
+
+const (
+	CodeQueryOperationLogFailed = 9001
+	CodeOperationLogFilterError = 9002
 )

@@ -1,4 +1,5 @@
 import {
+  ClipboardList,
   History,
   LayoutDashboard,
   Package,
@@ -43,6 +44,11 @@ export function getSidebarData(isAdmin: boolean): SidebarData {
                   title: '库存流水',
                   url: '/stock-logs',
                   icon: History,
+                },
+                {
+                  title: '操作日志',
+                  url: '/operation-logs',
+                  icon: ClipboardList,
                 },
               ]
             : []),

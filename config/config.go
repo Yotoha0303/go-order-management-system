@@ -11,12 +11,13 @@ import (
 )
 
 type Config struct {
-	Server     ServerConfig   `yaml:"server"`
-	MySQL      MySQLConfig    `yaml:"mysql"`
-	Redis      RedisConfig    `yaml:"redis"`
-	RabbitMQ   RabbitMQConfig `yaml:"rabbitmq"`
-	JWT        JWTConfig      `yaml:"jwt"`
-	HttpServer HttpServer     `yaml:"http"`
+	Server             ServerConfig             `yaml:"server"`
+	MySQL              MySQLConfig              `yaml:"mysql"`
+	Redis              RedisConfig              `yaml:"redis"`
+	RabbitMQ           RabbitMQConfig           `yaml:"rabbitmq"`
+	InventoryReconcile InventoryReconcileConfig `yaml:"inventoryReconcile"`
+	JWT                JWTConfig                `yaml:"jwt"`
+	HttpServer         HttpServer               `yaml:"http"`
 }
 
 type ServerConfig struct {
@@ -34,11 +35,19 @@ type MySQLConfig struct {
 	ConnMaxLifetime time.Duration `yaml:"connMaxLifeTime"`
 	ConnMaxIdleTime time.Duration `yaml:"connMaxIdleTime"`
 	PingTimeout     time.Duration `yaml:"pingTimeout"`
+	SlowThreshold   time.Duration `yaml:"slowThreshold"`
+	LogLevel        string        `yaml:"logLevel"`
 }
 
 type RedisConfig struct {
 	Addr string `yaml:"addr"`
 	DB   int    `yaml:"db"`
+}
+
+type InventoryReconcileConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	Interval time.Duration `yaml:"interval"`
+	Timeout  time.Duration `yaml:"timeout"`
 }
 
 type JWTConfig struct {
@@ -107,6 +116,16 @@ func applyEnvOverrides(cfg *Config) error {
 	if v := os.Getenv("DB_NAME"); v != "" {
 		cfg.MySQL.Database = v
 	}
+	if v := os.Getenv("DB_SLOW_THRESHOLD"); v != "" {
+		threshold, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid DB_SLOW_THRESHOLD: %w", err)
+		}
+		cfg.MySQL.SlowThreshold = threshold
+	}
+	if v := os.Getenv("DB_LOG_LEVEL"); v != "" {
+		cfg.MySQL.LogLevel = v
+	}
 
 	if v := os.Getenv("REDIS_ADDR"); v != "" {
 		cfg.Redis.Addr = v
@@ -121,6 +140,9 @@ func applyEnvOverrides(cfg *Config) error {
 	if err := applyRabbitMQEnvOverrides(&cfg.RabbitMQ); err != nil {
 		return err
 	}
+	if err := applyInventoryReconcileEnvOverrides(&cfg.InventoryReconcile); err != nil {
+		return err
+	}
 
 	if v := os.Getenv("JWT_EXPIRE_HOURS"); v != "" {
 		hours, err := strconv.Atoi(v)
@@ -130,5 +152,30 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.JWT.ExpireHours = hours
 	}
 
+	return nil
+}
+
+func applyInventoryReconcileEnvOverrides(cfg *InventoryReconcileConfig) error {
+	if v := os.Getenv("INVENTORY_RECONCILE_ENABLED"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("invalid INVENTORY_RECONCILE_ENABLED: %w", err)
+		}
+		cfg.Enabled = enabled
+	}
+	if v := os.Getenv("INVENTORY_RECONCILE_INTERVAL"); v != "" {
+		interval, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid INVENTORY_RECONCILE_INTERVAL: %w", err)
+		}
+		cfg.Interval = interval
+	}
+	if v := os.Getenv("INVENTORY_RECONCILE_TIMEOUT"); v != "" {
+		timeout, err := time.ParseDuration(v)
+		if err != nil {
+			return fmt.Errorf("invalid INVENTORY_RECONCILE_TIMEOUT: %w", err)
+		}
+		cfg.Timeout = timeout
+	}
 	return nil
 }
