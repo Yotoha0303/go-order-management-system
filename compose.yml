@@ -14,11 +14,17 @@ services:
       DB_USER: root
       DB_NAME: ${DB_NAME:-go-order-management-system}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      DB_SLOW_THRESHOLD: ${DB_SLOW_THRESHOLD:-200ms}
+      DB_LOG_LEVEL: ${DB_LOG_LEVEL:-warn}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-24}
       REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-order_app}:${RABBITMQ_PASSWORD:-order_dev_password}@rabbitmq:5672/
       ORDER_TIMEOUT_DELAY: ${ORDER_TIMEOUT_DELAY:-30m}
+      INVENTORY_RECONCILE_ENABLED: ${INVENTORY_RECONCILE_ENABLED:-true}
+      INVENTORY_RECONCILE_INTERVAL: ${INVENTORY_RECONCILE_INTERVAL:-5m}
+      INVENTORY_RECONCILE_TIMEOUT: ${INVENTORY_RECONCILE_TIMEOUT:-3s}
     depends_on:
       mysql:
         condition: service_healthy

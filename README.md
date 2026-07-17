@@ -289,6 +289,17 @@ make docker-up
 
 `make docker-up` 会构建应用镜像，启动 MySQL、Redis、RabbitMQ 和应用，并执行数据库迁移。
 
+### 云主机一键部署
+
+Ubuntu/Debian 云主机可使用仓库根目录脚本，自动安装 Docker、启动完整后端栈、构建前端并由 Nginx 同源反代：
+
+```bash
+chmod +x deploy.sh
+sudo ./deploy.sh
+```
+
+说明见 [docs/deploy.md](docs/deploy.md)。脚本会生成或补齐 `.env`，部署后提供前端页面、`/api`、`/readyz` 与 `/metrics`。
+
 ### 本地运行前端
 
 ```powershell
@@ -353,6 +364,7 @@ service 测试会清理所连接数据库中的业务表。必须使用独立测
 - [docs/project_evolution.md](docs/project_evolution.md)：后续演进
 - [docs/observability.md](docs/observability.md)：可观测性指标和告警建议
 - [docs/performance.md](docs/performance.md)：压测工具和慢 SQL 分析流程
+- [docs/deploy.md](docs/deploy.md)：云主机一键部署脚本说明
 - [docs/interview_guide.md](docs/interview_guide.md)：简历描述、项目讲解和面试追问
 - [docs/evidence](docs/evidence)：项目运行、测试与关键业务截图证据
 
