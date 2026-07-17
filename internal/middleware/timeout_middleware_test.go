@@ -73,6 +73,9 @@ func TestTimeoutHandler_ReturnsTimeoutResponseAndCancelsContext(t *testing.T) {
 	if got := recorder.Header().Get(middleware.RequestIDHeader); got != "timeout-test-request" {
 		t.Fatalf("unexpected request ID: %q", got)
 	}
+	if got := recorder.Header().Get(middleware.TraceparentHeader); got == "" {
+		t.Fatal("expected traceparent header")
+	}
 
 	var body response.Response
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {

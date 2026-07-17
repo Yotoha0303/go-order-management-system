@@ -24,7 +24,9 @@ func TimeoutHandler(next http.Handler, timeout time.Duration) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := ensureRequestID(r)
+		_, _ = ensureTraceContext(r)
 		w.Header().Set(RequestIDHeader, requestID)
+		w.Header().Set(TraceparentHeader, r.Header.Get(TraceparentHeader))
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		handler.ServeHTTP(w, r)
 	})

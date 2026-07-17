@@ -17,12 +17,16 @@ func AccessLog(logger *slog.Logger) gin.HandlerFunc {
 		path := c.Request.URL.Path
 		router := c.FullPath()
 		requestID := GetRequestID(c)
+		traceID := GetTraceID(c)
+		spanID := GetSpanID(c)
 
 		c.Next()
 
 		status := c.Writer.Status()
 		attrs := []slog.Attr{
 			slog.String("request_id", requestID),
+			slog.String("trace_id", traceID),
+			slog.String("span_id", spanID),
 			slog.String("method", c.Request.Method),
 			slog.String("path", path),
 			slog.String("router", router),

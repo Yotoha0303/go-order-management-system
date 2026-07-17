@@ -4,14 +4,16 @@ import (
 	"context"
 	"fmt"
 	"go-order-management-system/config"
+	"log/slog"
 	"os"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
-var openMySQL = func(cfg *config.Config, dsn string) (*gorm.DB, error) {
+var openMySQL = func(cfg *config.Config, dsn string, logger *slog.Logger) (*gorm.DB, error) {
 	gormDB, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		Logger:         newGORMLogger(cfg.MySQL, logger),
 		TranslateError: true,
 	})
 	if err != nil {
@@ -56,6 +58,10 @@ func buildDSN(cfg *config.Config, dbPassword string) (string, error) {
 }
 
 func InitDB(cfg *config.Config) (*gorm.DB, error) {
+	return InitDBWithLogger(cfg, nil)
+}
+
+func InitDBWithLogger(cfg *config.Config, logger *slog.Logger) (*gorm.DB, error) {
 	dsn, err := buildDSN(cfg, os.Getenv("MYSQL_PASSWORD"))
 	if err != nil {
 		return nil, err
@@ -64,5 +70,5 @@ func InitDB(cfg *config.Config) (*gorm.DB, error) {
 	if dsn == "" {
 		return nil, fmt.Errorf("database dsn not found")
 	}
-	return openMySQL(cfg, dsn)
+	return openMySQL(cfg, dsn, logger)
 }
