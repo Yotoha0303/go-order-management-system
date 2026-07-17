@@ -72,3 +72,11 @@ Authorization: Bearer {{token}}
 ### 9. 查询商品库存 - 不存在
 GET {{baseUrl}}/api/v1/inventory/products/999999
 Authorization: Bearer {{token}}
+
+### 10. Redis/MySQL 库存差异报告
+GET {{baseUrl}}/api/v1/inventory/redis/reconcile
+Authorization: Bearer {{token}}
+
+### 11. 重建 Redis 可售库存
+POST {{baseUrl}}/api/v1/inventory/redis/rebuild
+Authorization: Bearer {{token}}

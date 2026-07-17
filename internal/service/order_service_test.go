@@ -19,6 +19,45 @@ func newOrderService(t *testing.T) (*gorm.DB, *service.OrderService) {
 	return testDB, service.NewOrderService(testDB)
 }
 
+type fakeInventoryPreDeductor struct {
+	applied      bool
+	insufficient bool
+	preDeducts   []int64
+	releases     []int64
+	restores     []int64
+	confirms     []int64
+}
+
+func (f *fakeInventoryPreDeductor) PreDeductInventory(_ context.Context, orderID int64, _ []request.CreateOrderItemRequest) (bool, bool) {
+	f.preDeducts = append(f.preDeducts, orderID)
+	return f.applied, f.insufficient
+}
+
+func (f *fakeInventoryPreDeductor) ReleasePreDeductedInventory(_ context.Context, orderID int64) {
+	f.releases = append(f.releases, orderID)
+}
+
+func (f *fakeInventoryPreDeductor) RestorePreDeductedInventory(_ context.Context, orderID int64) {
+	f.restores = append(f.restores, orderID)
+}
+
+func (f *fakeInventoryPreDeductor) ConfirmPreDeductedInventory(_ context.Context, orderID int64) {
+	f.confirms = append(f.confirms, orderID)
+}
+
+type fakeOrderMetrics struct {
+	orderCreates []string
+	transitions  []string
+}
+
+func (f *fakeOrderMetrics) RecordOrderCreate(result string) {
+	f.orderCreates = append(f.orderCreates, result)
+}
+
+func (f *fakeOrderMetrics) RecordOrderStateTransition(action, result string) {
+	f.transitions = append(f.transitions, action+":"+result)
+}
+
 func TestCreateOrder_InsufficientStock(t *testing.T) {
 	testDB, orderSvc := newOrderService(t)
 	p := seedProduct(t, testDB, "p1", 100, model.ProductStatusOnSale)
@@ -33,6 +72,116 @@ func TestCreateOrder_InsufficientStock(t *testing.T) {
 
 	if !errors.Is(err, service.ErrInsufficientStock) {
 		t.Fatalf("expected ErrInsufficientStock, got %v", err)
+	}
+}
+
+func TestCreateOrder_RecordsBusinessMetrics(t *testing.T) {
+	testDB := setupTestDB(t)
+	metrics := &fakeOrderMetrics{}
+	orderSvc := service.NewOrderServiceWithTimeoutInventoryPreDeductorAndMetrics(testDB, 30*time.Minute, nil, metrics)
+	product := seedProduct(t, testDB, "metrics-create-product", 100, model.ProductStatusOnSale)
+	seedInventory(t, testDB, product.ID, 10)
+	req := request.CreateOrderRequest{
+		IdempotencyKey: newIdempotencyKey(),
+		Items: []request.CreateOrderItemRequest{
+			{ProductID: product.ID, Quantity: 1},
+		},
+	}
+
+	first, err := orderSvc.CreateOrder(context.Background(), testUserID, req)
+	if err != nil {
+		t.Fatalf("create order failed: %v", err)
+	}
+	second, err := orderSvc.CreateOrder(context.Background(), testUserID, req)
+	if err != nil {
+		t.Fatalf("idempotent replay failed: %v", err)
+	}
+	if first.ID != second.ID {
+		t.Fatalf("expected replay order %d, got %d", first.ID, second.ID)
+	}
+
+	want := []string{"success", "idempotent_replay"}
+	if len(metrics.orderCreates) != len(want) {
+		t.Fatalf("expected order create metrics %v, got %v", want, metrics.orderCreates)
+	}
+	for i := range want {
+		if metrics.orderCreates[i] != want[i] {
+			t.Fatalf("expected order create metrics %v, got %v", want, metrics.orderCreates)
+		}
+	}
+}
+
+func TestCreateOrder_RecordsFailureBusinessMetrics(t *testing.T) {
+	testDB := setupTestDB(t)
+	metrics := &fakeOrderMetrics{}
+	orderSvc := service.NewOrderServiceWithTimeoutInventoryPreDeductorAndMetrics(testDB, 30*time.Minute, nil, metrics)
+	product := seedProduct(t, testDB, "metrics-create-failure-product", 100, model.ProductStatusOnSale)
+	seedInventory(t, testDB, product.ID, 1)
+
+	_, err := orderSvc.CreateOrder(context.Background(), testUserID, request.CreateOrderRequest{
+		IdempotencyKey: newIdempotencyKey(),
+		Items: []request.CreateOrderItemRequest{
+			{ProductID: product.ID, Quantity: 2},
+		},
+	})
+	if !errors.Is(err, service.ErrInsufficientStock) {
+		t.Fatalf("expected ErrInsufficientStock, got %v", err)
+	}
+	if len(metrics.orderCreates) != 1 || metrics.orderCreates[0] != "insufficient_stock" {
+		t.Fatalf("expected insufficient_stock metric, got %v", metrics.orderCreates)
+	}
+}
+
+func TestCreateOrder_RedisPreDeductInsufficient(t *testing.T) {
+	testDB := setupTestDB(t)
+	guard := &fakeInventoryPreDeductor{insufficient: true}
+	orderSvc := service.NewOrderServiceWithTimeoutAndInventoryPreDeductor(testDB, 30*time.Minute, guard)
+	product := seedProduct(t, testDB, "redis-pre-deduct-insufficient", 100, model.ProductStatusOnSale)
+	seedInventory(t, testDB, product.ID, 10)
+
+	_, err := orderSvc.CreateOrder(context.Background(), testUserID, request.CreateOrderRequest{
+		IdempotencyKey: newIdempotencyKey(),
+		Items: []request.CreateOrderItemRequest{
+			{ProductID: product.ID, Quantity: 1},
+		},
+	})
+
+	if !errors.Is(err, service.ErrInsufficientStock) {
+		t.Fatalf("expected ErrInsufficientStock, got %v", err)
+	}
+	if len(guard.preDeducts) != 1 {
+		t.Fatalf("expected one redis pre-deduct attempt, got %d", len(guard.preDeducts))
+	}
+	if len(guard.releases) != 0 {
+		t.Fatalf("expected no redis release when pre-deduct was not applied, got %v", guard.releases)
+	}
+}
+
+func TestCreateOrder_ReleasesRedisPreDeductOnTransactionFailure(t *testing.T) {
+	testDB := setupTestDB(t)
+	guard := &fakeInventoryPreDeductor{applied: true}
+	orderSvc := service.NewOrderServiceWithTimeoutAndInventoryPreDeductor(testDB, 30*time.Minute, guard)
+	productA := seedProduct(t, testDB, "redis-release-product-a", 100, model.ProductStatusOnSale)
+	productB := seedProduct(t, testDB, "redis-release-product-b", 100, model.ProductStatusOnSale)
+	seedInventory(t, testDB, productA.ID, 10)
+	seedInventory(t, testDB, productB.ID, 1)
+
+	_, err := orderSvc.CreateOrder(context.Background(), testUserID, request.CreateOrderRequest{
+		IdempotencyKey: newIdempotencyKey(),
+		Items: []request.CreateOrderItemRequest{
+			{ProductID: productA.ID, Quantity: 1},
+			{ProductID: productB.ID, Quantity: 2},
+		},
+	})
+
+	if !errors.Is(err, service.ErrInsufficientStock) {
+		t.Fatalf("expected ErrInsufficientStock, got %v", err)
+	}
+	if len(guard.preDeducts) != 1 {
+		t.Fatalf("expected one redis pre-deduct attempt, got %d", len(guard.preDeducts))
+	}
+	if len(guard.releases) != 1 || guard.releases[0] != guard.preDeducts[0] {
+		t.Fatalf("expected redis reservation release for order %v, got %v", guard.preDeducts, guard.releases)
 	}
 }
 
@@ -148,6 +297,47 @@ func TestCreateOrder_MultipleItemsSecondInsufficient_Rollback(t *testing.T) {
 	}
 	if outboxCount != 0 {
 		t.Fatalf("expected no timeout event committed after rollback, got %d", outboxCount)
+	}
+}
+
+func TestCreateOrder_MultipleItemsProcessedByProductID(t *testing.T) {
+	testDB, orderSvc := newOrderService(t)
+	productA := seedProduct(t, testDB, "ordered-product-a", 100, model.ProductStatusOnSale)
+	productB := seedProduct(t, testDB, "ordered-product-b", 200, model.ProductStatusOnSale)
+	seedInventory(t, testDB, productA.ID, 10)
+	seedInventory(t, testDB, productB.ID, 10)
+
+	order, err := orderSvc.CreateOrder(context.Background(), testUserID, request.CreateOrderRequest{
+		IdempotencyKey: newIdempotencyKey(),
+		Items: []request.CreateOrderItemRequest{
+			{ProductID: productB.ID, Quantity: 2},
+			{ProductID: productA.ID, Quantity: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create order failed: %v", err)
+	}
+
+	var items []model.OrderItem
+	if err := testDB.Where("order_id = ?", order.ID).Order("id ASC").Find(&items).Error; err != nil {
+		t.Fatalf("query order items failed: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 order items, got %d", len(items))
+	}
+	if items[0].ProductID != productA.ID || items[1].ProductID != productB.ID {
+		t.Fatalf("expected order items processed by product_id asc, got %d then %d", items[0].ProductID, items[1].ProductID)
+	}
+
+	var logs []model.StockLog
+	if err := testDB.Where("biz_id = ? AND biz_type = ?", order.ID, model.StockBizOrderDeduct).Order("id ASC").Find(&logs).Error; err != nil {
+		t.Fatalf("query stock logs failed: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("expected 2 stock logs, got %d", len(logs))
+	}
+	if logs[0].ProductID != productA.ID || logs[1].ProductID != productB.ID {
+		t.Fatalf("expected stock logs processed by product_id asc, got %d then %d", logs[0].ProductID, logs[1].ProductID)
 	}
 }
 
@@ -458,6 +648,41 @@ func TestPayOrder_FromPendingToPaid_Success(t *testing.T) {
 
 }
 
+func TestPayOrder_RecordsBusinessMetrics(t *testing.T) {
+	testDB := setupTestDB(t)
+	metrics := &fakeOrderMetrics{}
+	orderSvc := service.NewOrderServiceWithTimeoutInventoryPreDeductorAndMetrics(testDB, 30*time.Minute, nil, metrics)
+	product := seedProduct(t, testDB, "metrics-pay-product", 100, model.ProductStatusOnSale)
+	seedInventory(t, testDB, product.ID, 10)
+	order, err := orderSvc.CreateOrder(context.Background(), testUserID, request.CreateOrderRequest{
+		IdempotencyKey: newIdempotencyKey(),
+		Items: []request.CreateOrderItemRequest{
+			{ProductID: product.ID, Quantity: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create order failed: %v", err)
+	}
+
+	if err := orderSvc.PayOrder(context.Background(), testUserID, order.ID); err != nil {
+		t.Fatalf("pay order failed: %v", err)
+	}
+	err = orderSvc.PayOrder(context.Background(), testUserID, order.ID)
+	if !errors.Is(err, service.ErrOrderAlreadyPaid) {
+		t.Fatalf("expected ErrOrderAlreadyPaid, got %v", err)
+	}
+
+	want := []string{"pay:success", "pay:already_paid"}
+	if len(metrics.transitions) != len(want) {
+		t.Fatalf("expected transition metrics %v, got %v", want, metrics.transitions)
+	}
+	for i := range want {
+		if metrics.transitions[i] != want[i] {
+			t.Fatalf("expected transition metrics %v, got %v", want, metrics.transitions)
+		}
+	}
+}
+
 func TestPayAndFinishOrder_Success(t *testing.T) {
 	testDB, orderSvc := newOrderService(t)
 	p := seedProduct(t, testDB, "p1", 100, model.ProductStatusOnSale)
@@ -578,6 +803,61 @@ func TestCancelOrder_Success(t *testing.T) {
 		t.Fatalf("expected stock log after_quantity=%d,got %d", ctx.InitQty, rollbackLog.AfterQuantity)
 	}
 
+}
+
+func TestCancelOrder_RestoresRedisPreDeductReservation(t *testing.T) {
+	testDB := setupTestDB(t)
+	guard := &fakeInventoryPreDeductor{applied: true}
+	orderSvc := service.NewOrderServiceWithTimeoutAndInventoryPreDeductor(testDB, 30*time.Minute, guard)
+	product := seedProduct(t, testDB, "redis-restore-cancel-product", 100, model.ProductStatusOnSale)
+	seedInventory(t, testDB, product.ID, 10)
+
+	order, err := orderSvc.CreateOrder(context.Background(), testUserID, request.CreateOrderRequest{
+		IdempotencyKey: newIdempotencyKey(),
+		Items: []request.CreateOrderItemRequest{
+			{ProductID: product.ID, Quantity: 2},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create order failed: %v", err)
+	}
+
+	if err := orderSvc.CancelOrder(context.Background(), testUserID, order.ID); err != nil {
+		t.Fatalf("cancel order failed: %v", err)
+	}
+
+	if len(guard.restores) != 1 || guard.restores[0] != order.ID {
+		t.Fatalf("expected redis reservation restore for order %d, got %v", order.ID, guard.restores)
+	}
+}
+
+func TestPayOrder_ConfirmsRedisPreDeductReservation(t *testing.T) {
+	testDB := setupTestDB(t)
+	guard := &fakeInventoryPreDeductor{applied: true}
+	orderSvc := service.NewOrderServiceWithTimeoutAndInventoryPreDeductor(testDB, 30*time.Minute, guard)
+	product := seedProduct(t, testDB, "redis-confirm-pay-product", 100, model.ProductStatusOnSale)
+	seedInventory(t, testDB, product.ID, 10)
+
+	order, err := orderSvc.CreateOrder(context.Background(), testUserID, request.CreateOrderRequest{
+		IdempotencyKey: newIdempotencyKey(),
+		Items: []request.CreateOrderItemRequest{
+			{ProductID: product.ID, Quantity: 2},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create order failed: %v", err)
+	}
+
+	if err := orderSvc.PayOrder(context.Background(), testUserID, order.ID); err != nil {
+		t.Fatalf("pay order failed: %v", err)
+	}
+
+	if len(guard.confirms) != 1 || guard.confirms[0] != order.ID {
+		t.Fatalf("expected redis reservation confirm for order %d, got %v", order.ID, guard.confirms)
+	}
+	if len(guard.restores) != 0 {
+		t.Fatalf("expected no redis restore after pay, got %v", guard.restores)
+	}
 }
 
 func TestPaidOrder_UnableCancel_ReturnsError(t *testing.T) {
@@ -1162,6 +1442,36 @@ func TestCreateOrder_IdempotentReplayReturnsSameOrder(t *testing.T) {
 	}
 	if timeoutEventCount != 1 {
 		t.Fatalf("timeout events=%d want=1 after idempotent replay", timeoutEventCount)
+	}
+}
+
+func TestCreateOrder_IdempotentReplayDoesNotPreDeductRedisAgain(t *testing.T) {
+	testDB := setupTestDB(t)
+	guard := &fakeInventoryPreDeductor{applied: true}
+	orderSvc := service.NewOrderServiceWithTimeoutAndInventoryPreDeductor(testDB, 30*time.Minute, guard)
+	product := seedProduct(t, testDB, "redis-idempotent-replay-product", 100, model.ProductStatusOnSale)
+	seedInventory(t, testDB, product.ID, 10)
+	req := request.CreateOrderRequest{
+		IdempotencyKey: newIdempotencyKey(),
+		Items: []request.CreateOrderItemRequest{
+			{ProductID: product.ID, Quantity: 1},
+		},
+	}
+
+	first, err := orderSvc.CreateOrder(context.Background(), testUserID, req)
+	if err != nil {
+		t.Fatalf("first create order failed: %v", err)
+	}
+	second, err := orderSvc.CreateOrder(context.Background(), testUserID, req)
+	if err != nil {
+		t.Fatalf("idempotent replay failed: %v", err)
+	}
+
+	if second.ID != first.ID {
+		t.Fatalf("expected replay to return order %d, got %d", first.ID, second.ID)
+	}
+	if len(guard.preDeducts) != 1 || guard.preDeducts[0] != first.ID {
+		t.Fatalf("expected one redis pre-deduct for first order %d, got %v", first.ID, guard.preDeducts)
 	}
 }
 

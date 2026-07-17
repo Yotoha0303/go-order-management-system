@@ -34,6 +34,30 @@ var (
 		response.CodeParameterError,
 		"库存数量不能为负",
 	)
+
+	ErrInventoryStockRebuildUnavailable = apperror.New(
+		http.StatusServiceUnavailable,
+		response.CodeRebuildInventoryCacheFailed,
+		"Redis 库存重建服务不可用",
+	)
+
+	ErrInventoryStockRebuildFailed = apperror.New(
+		http.StatusInternalServerError,
+		response.CodeRebuildInventoryCacheFailed,
+		"Redis 库存重建失败",
+	)
+
+	ErrInventoryStockReconcileUnavailable = apperror.New(
+		http.StatusServiceUnavailable,
+		response.CodeReconcileInventoryCacheFailed,
+		"Redis 库存对账服务不可用",
+	)
+
+	ErrInventoryStockReconcileFailed = apperror.New(
+		http.StatusInternalServerError,
+		response.CodeReconcileInventoryCacheFailed,
+		"Redis 库存对账失败",
+	)
 )
 
 // product err
@@ -191,5 +215,20 @@ var (
 		http.StatusConflict,
 		response.CodeOrderAlreadyPaid,
 		"订单已支付",
+	)
+)
+
+// operation log err
+var (
+	ErrInvalidOperationLogPagination = apperror.New(
+		http.StatusBadRequest,
+		response.CodeOperationLogFilterError,
+		"操作日志分页参数无效",
+	)
+
+	ErrInvalidOperationLogFilter = apperror.New(
+		http.StatusBadRequest,
+		response.CodeOperationLogFilterError,
+		"操作日志筛选参数无效",
 	)
 )

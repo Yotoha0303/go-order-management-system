@@ -40,7 +40,7 @@ func (p *InventoryService) InitInventory(ctx context.Context, req *request.InitI
 		return ErrInitInventoryExists
 	}
 
-	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		inventory := &model.Inventory{
 			ProductID:     product.ID,
 			StockQuantity: *req.StockQuantity,
@@ -63,7 +63,12 @@ func (p *InventoryService) InitInventory(ctx context.Context, req *request.InitI
 			return ErrCreateStockLogFailed
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	p.setInventoryStock(ctx, product.ID, *req.StockQuantity)
+	return nil
 }
 
 func (p *InventoryService) GetInventoryByProductID(ctx context.Context, productID int64) (*model.Inventory, error) {
@@ -82,7 +87,8 @@ func (p *InventoryService) AddInventory(ctx context.Context, req request.AddInve
 		return ErrInvalidAddQuantity
 	}
 
-	return p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var afterQuantity int64
+	if err := p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
 		inventory, err := dao.GetInventoryByProductIDForUpdate(ctx, tx, req.ProductID)
 		if err != nil {
@@ -101,7 +107,7 @@ func (p *InventoryService) AddInventory(ctx context.Context, req request.AddInve
 		}
 
 		beforeQuantity := inventory.StockQuantity
-		afterQuantity := beforeQuantity + req.Quantity
+		afterQuantity = beforeQuantity + req.Quantity
 
 		if err := dao.UpdateInventoryStockQuantity(ctx, tx, req.ProductID, afterQuantity); err != nil {
 			return err
@@ -121,5 +127,88 @@ func (p *InventoryService) AddInventory(ctx context.Context, req request.AddInve
 			return ErrCreateStockLogFailed
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	p.setInventoryStock(ctx, req.ProductID, afterQuantity)
+	return nil
+}
+
+func (p *InventoryService) RebuildRedisInventoryStock(ctx context.Context) (int, error) {
+	if p == nil || p.db == nil {
+		return 0, ErrDatabaseNotInitialized
+	}
+	rebuilder, ok := p.stockWriter.(InventoryStockRebuilder)
+	if p.stockWriter == nil || !ok {
+		return 0, ErrInventoryStockRebuildUnavailable
+	}
+
+	inventories, err := dao.ListAllInventories(ctx, p.db)
+	if err != nil {
+		return 0, err
+	}
+	count, err := rebuilder.RebuildInventoryStocks(context.WithoutCancel(ctx), inventories)
+	if err != nil {
+		return 0, ErrInventoryStockRebuildFailed
+	}
+	return count, nil
+}
+
+func (p *InventoryService) ReconcileRedisInventoryStock(ctx context.Context) (InventoryRedisReconcileReport, error) {
+	if p == nil || p.db == nil {
+		return InventoryRedisReconcileReport{}, ErrDatabaseNotInitialized
+	}
+	reader, ok := p.stockWriter.(InventoryStockReader)
+	if p.stockWriter == nil || !ok {
+		return InventoryRedisReconcileReport{}, ErrInventoryStockReconcileUnavailable
+	}
+
+	inventories, err := dao.ListAllInventories(ctx, p.db)
+	if err != nil {
+		return InventoryRedisReconcileReport{}, err
+	}
+	productIDs := make([]int64, 0, len(inventories))
+	for _, inventory := range inventories {
+		if inventory != nil && inventory.ProductID > 0 {
+			productIDs = append(productIDs, inventory.ProductID)
+		}
+	}
+	redisStocks, err := reader.GetInventoryStocks(ctx, productIDs)
+	if err != nil {
+		return InventoryRedisReconcileReport{}, ErrInventoryStockReconcileFailed
+	}
+
+	report := InventoryRedisReconcileReport{CheckedCount: len(productIDs)}
+	for _, inventory := range inventories {
+		if inventory == nil || inventory.ProductID <= 0 {
+			continue
+		}
+		redisQuantity, exists := redisStocks[inventory.ProductID]
+		if !exists || redisQuantity == nil {
+			report.Items = append(report.Items, InventoryRedisReconcileItem{
+				ProductID:     inventory.ProductID,
+				MySQLQuantity: inventory.StockQuantity,
+				Status:        "missing",
+			})
+			continue
+		}
+		if *redisQuantity != inventory.StockQuantity {
+			report.Items = append(report.Items, InventoryRedisReconcileItem{
+				ProductID:     inventory.ProductID,
+				MySQLQuantity: inventory.StockQuantity,
+				RedisQuantity: redisQuantity,
+				Status:        "mismatch",
+			})
+		}
+	}
+	report.DiffCount = len(report.Items)
+	return report, nil
+}
+
+func (p *InventoryService) setInventoryStock(ctx context.Context, productID int64, quantity int64) {
+	if p == nil || p.stockWriter == nil {
+		return
+	}
+	p.stockWriter.SetInventoryStock(context.WithoutCancel(ctx), productID, quantity)
 }

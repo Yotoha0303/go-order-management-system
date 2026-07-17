@@ -15,6 +15,8 @@ type InventoryService interface {
 	InitInventory(ctx context.Context, req *request.InitInventoryRequest) error
 	AddInventory(ctx context.Context, req request.AddInventoryRequest) error
 	GetInventoryByProductID(ctx context.Context, productID int64) (*model.Inventory, error)
+	RebuildRedisInventoryStock(ctx context.Context) (int, error)
+	ReconcileRedisInventoryStock(ctx context.Context) (service.InventoryRedisReconcileReport, error)
 }
 
 type InventoryHandler struct {
@@ -72,4 +74,35 @@ func (p *InventoryHandler) GetInventoryByProductID(c *gin.Context) {
 	}
 
 	response.Success(c, inventory)
+}
+
+func (p *InventoryHandler) RebuildRedisInventoryStock(c *gin.Context) {
+	count, err := p.inventoryService.RebuildRedisInventoryStock(c.Request.Context())
+	if err != nil {
+		handleError(c, err, response.CodeRebuildInventoryCacheFailed, "重建 Redis 库存失败")
+		return
+	}
+	response.Success(c, response.InventoryRedisRebuildResponse{RebuildCount: count})
+}
+
+func (p *InventoryHandler) ReconcileRedisInventoryStock(c *gin.Context) {
+	report, err := p.inventoryService.ReconcileRedisInventoryStock(c.Request.Context())
+	if err != nil {
+		handleError(c, err, response.CodeReconcileInventoryCacheFailed, "Redis 库存对账失败")
+		return
+	}
+	items := make([]response.InventoryRedisReconcileItem, 0, len(report.Items))
+	for _, item := range report.Items {
+		items = append(items, response.InventoryRedisReconcileItem{
+			ProductID:     item.ProductID,
+			MySQLQuantity: item.MySQLQuantity,
+			RedisQuantity: item.RedisQuantity,
+			Status:        item.Status,
+		})
+	}
+	response.Success(c, response.InventoryRedisReconcileResponse{
+		CheckedCount: report.CheckedCount,
+		DiffCount:    report.DiffCount,
+		Items:        items,
+	})
 }

@@ -22,6 +22,11 @@ func GetInventoryByProductIDForUpdate(ctx context.Context, db *gorm.DB, productI
 	return &inventory, db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("product_id = ?", productID).First(&inventory).Error
 }
 
+func ListAllInventories(ctx context.Context, db *gorm.DB) ([]*model.Inventory, error) {
+	var inventories []*model.Inventory
+	return inventories, db.WithContext(ctx).Order("product_id asc").Find(&inventories).Error
+}
+
 func UpdateInventoryStockQuantity(ctx context.Context, db *gorm.DB, productID int64, stockQuantity int64) error {
 
 	result := db.WithContext(ctx).Model(&model.Inventory{}).Where("product_id = ?", productID).Update("stock_quantity", stockQuantity)

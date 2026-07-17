@@ -62,6 +62,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		&model.Product{},
 		&model.Inventory{},
 		&model.StockLog{},
+		&model.OperationLog{},
 		&model.Order{},
 		&model.OrderItem{},
 		&model.OrderIdempotencyKey{},
@@ -127,6 +128,7 @@ func cleanTables(t *testing.T, db *gorm.DB) {
 	tables := []string{
 		"order_timeout_outbox",
 		"order_idempotency_keys",
+		"operation_logs",
 		"stock_logs",
 		"order_items",
 		"orders",
