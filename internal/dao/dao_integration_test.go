@@ -190,6 +190,7 @@ func setupIsolatedDAOTestDB(t *testing.T) *gorm.DB {
 		&model.Inventory{},
 		&model.Order{},
 		&model.Product{},
+		&model.OperationLog{},
 		&model.OrderTimeoutOutbox{},
 	); err != nil {
 		t.Fatalf("migrate isolated database failed: %v", err)

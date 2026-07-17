@@ -1,0 +1,11 @@
+### 查询操作日志
+GET {{baseUrl}}/api/v1/operation-logs?page=1&page_size=20
+Authorization: Bearer {{accessToken}}
+
+### 按操作人查询操作日志
+GET {{baseUrl}}/api/v1/operation-logs?user_id=1&page=1&page_size=20
+Authorization: Bearer {{accessToken}}
+
+### 按动作查询操作日志
+GET {{baseUrl}}/api/v1/operation-logs?action=POST%20%2Fapi%2Fv1%2Fproducts&page=1&page_size=20
+Authorization: Bearer {{accessToken}}

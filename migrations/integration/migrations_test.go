@@ -133,6 +133,19 @@ func TestMigrationsBackfillExistingUserRole(t *testing.T) {
 		t.Fatalf("expected order timeout outbox foreign key, got %d", orderTimeoutForeignKeyCount)
 	}
 
+	var operationLogColumnCount int
+	err = testDB.QueryRow(`
+		SELECT COUNT(*)
+		FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'operation_logs'
+	`, databaseName).Scan(&operationLogColumnCount)
+	if err != nil {
+		t.Fatalf("query operation_logs columns failed: %v", err)
+	}
+	if operationLogColumnCount != 12 {
+		t.Fatalf("expected 12 operation_logs columns, got %d", operationLogColumnCount)
+	}
+
 	runGoose(t, goosePath, migrationDSN, "down-to", "0")
 }
 
