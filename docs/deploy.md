@@ -52,11 +52,46 @@ sudo NONINTERACTIVE=1 ./deploy.sh
 | `SKIP_FIREWALL` | `0` | `1` 时不改 UFW |
 | `SKIP_FRONTEND` | `0` | `1` 时不构建前端（仅后端 + API 反代） |
 | `API_PORT` | `8082` | 本机后端监听端口（与 Compose 一致） |
+| `GOPROXY` | `https://goproxy.cn,direct` | Go 模块代理（Dockerfile / Compose build arg） |
+| `GOSUMDB` | `sum.golang.google.cn` | Go checksum 数据库 |
+| `APK_MIRROR` | `mirrors.aliyun.com` | Alpine `apk` 源主机名 |
+| `GO_IMAGE` / `RUNTIME_IMAGE` | 官方 tag | 可改写为镜像站前缀，见下文 |
+| `NPM_REGISTRY` | `https://registry.npmmirror.com` | 前端 `npm` 源 |
 
 示例：跳过系统升级与镜像加速，直接部署：
 
 ```bash
 sudo NONINTERACTIVE=1 SKIP_SYSTEM_UPDATE=1 SKIP_DOCKER_MIRROR=1 ./deploy.sh
+```
+
+## 中国大陆网络说明
+
+构建应用镜像时，默认按大陆网络优化：
+
+| 环节 | 默认策略 |
+| --- | --- |
+| Go 模块 | `GOPROXY=https://goproxy.cn,direct` |
+| 校验和 | `GOSUMDB=sum.golang.google.cn` |
+| Alpine 包 | `APK_MIRROR=mirrors.aliyun.com` |
+| Docker 基础镜像 / 依赖镜像 | `deploy.sh` 写入 registry-mirrors（DaoCloud、腾讯云） |
+| 前端 npm | `registry.npmmirror.com` |
+
+宿主机仍需能拉取 `golang`、`alpine`、`mysql`、`redis`、`rabbitmq` 等镜像。若官方 Hub 不可用，可在 `.env` 改写基础镜像前缀，例如：
+
+```env
+GO_IMAGE=docker.m.daocloud.io/library/golang:1.25.7-alpine
+RUNTIME_IMAGE=docker.m.daocloud.io/library/alpine:3.22
+```
+
+依赖服务镜像也可在 `compose.yml` 中按同样方式替换 tag 前缀，或继续依赖 Docker `registry-mirrors`。
+
+海外环境构建示例：
+
+```bash
+export GOPROXY=https://proxy.golang.org,direct
+export GOSUMDB=sum.golang.org
+export APK_MIRROR=dl-cdn.alpinelinux.org
+docker compose build
 ```
 
 ## 脚本做了什么

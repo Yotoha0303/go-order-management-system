@@ -178,6 +178,10 @@ prepare_env_file() {
   ensure_env_key "RABBITMQ_USER" "order_app"
   ensure_env_key "RABBITMQ_PASSWORD" "order_dev_password"
   ensure_env_key "JWT_EXPIRE_HOURS" "24"
+  # Mainland-friendly Docker build defaults (Compose passes these as build args).
+  ensure_env_key "GOPROXY" "https://goproxy.cn,direct"
+  ensure_env_key "GOSUMDB" "sum.golang.google.cn"
+  ensure_env_key "APK_MIRROR" "mirrors.aliyun.com"
 
   if [[ "${NONINTERACTIVE}" != "1" ]]; then
     echo
@@ -199,6 +203,15 @@ start_backend_stack() {
   echo_step 6 "Build and start Docker stack (app/mysql/redis/rabbitmq/migrate)"
   detect_compose
   export DOCKER_BUILDKIT=1
+  # Prefer values already in .env; export fallbacks for compose interpolation.
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+  export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
+  export GOSUMDB="${GOSUMDB:-sum.golang.google.cn}"
+  export APK_MIRROR="${APK_MIRROR:-mirrors.aliyun.com}"
+  echo "Build args: GOPROXY=${GOPROXY} GOSUMDB=${GOSUMDB} APK_MIRROR=${APK_MIRROR}"
   # shellcheck disable=SC2086
   ${COMPOSE_CMD} --env-file .env up -d --build --wait
   # shellcheck disable=SC2086
@@ -223,6 +236,8 @@ build_frontend() {
   echo_step 7 "Build frontend static assets"
   install_node_if_needed
   pushd fronted >/dev/null
+  # Mainland npm mirror; override with NPM_REGISTRY=https://registry.npmjs.org if needed.
+  npm config set registry "${NPM_REGISTRY:-https://registry.npmmirror.com}"
   if [[ -f package-lock.json ]]; then
     npm ci
   else

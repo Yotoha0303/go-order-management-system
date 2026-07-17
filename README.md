@@ -289,6 +289,14 @@ make docker-up
 
 `make docker-up` 会构建应用镜像，启动 MySQL、Redis、RabbitMQ 和应用，并执行数据库迁移。
 
+应用镜像构建默认面向中国大陆网络：`GOPROXY=goproxy.cn`、`GOSUMDB=sum.golang.google.cn`、Alpine 使用阿里云源。海外可覆盖：
+
+```bash
+GOPROXY=https://proxy.golang.org,direct GOSUMDB=sum.golang.org APK_MIRROR=dl-cdn.alpinelinux.org make docker-up
+```
+
+基础镜像拉不动时，可在 `.env` 设置 `GO_IMAGE` / `RUNTIME_IMAGE` 为镜像站地址，详见 [docs/deploy.md](docs/deploy.md)。
+
 ### 云主机一键部署
 
 Ubuntu/Debian 云主机可使用仓库根目录脚本，自动安装 Docker、启动完整后端栈、构建前端并由 Nginx 同源反代：

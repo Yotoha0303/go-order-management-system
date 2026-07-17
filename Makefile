@@ -20,6 +20,11 @@ LOADTEST_REQUESTS ?= 200
 LOADTEST_CONCURRENCY ?= 20
 LOADTEST_TIMEOUT ?= 5s
 LOADTEST_REPORT ?= docs/evidence/loadtest_report.md
+# Docker build args (China-friendly defaults; override for overseas builds)
+GOPROXY ?= https://goproxy.cn,direct
+GOSUMDB ?= sum.golang.google.cn
+APK_MIRROR ?= mirrors.aliyun.com
+export GOPROXY GOSUMDB APK_MIRROR
 
 ifeq ($(OS),Windows_NT)
 BINARY := $(BIN_DIR)/$(APP_NAME).exe

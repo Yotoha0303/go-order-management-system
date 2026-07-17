@@ -1,9 +1,23 @@
+# Build args (China-friendly defaults live in Dockerfile; override via .env if needed):
+#   GOPROXY=https://goproxy.cn,direct
+#   GOSUMDB=sum.golang.google.cn
+#   GO_IMAGE=golang:1.25.7-alpine
+#   RUNTIME_IMAGE=alpine:3.22
+# Example overseas build:
+#   GOPROXY=https://proxy.golang.org,direct GOSUMDB=sum.golang.org docker compose build
+
 services:
   app:
     image: go-order-management-system:local
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        GOSUMDB: ${GOSUMDB:-sum.golang.google.cn}
+        GO_IMAGE: ${GO_IMAGE:-golang:1.25.7-alpine}
+        RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
+        APK_MIRROR: ${APK_MIRROR:-mirrors.aliyun.com}
     container_name: go-order-management-system-app
     ports:
       - "8082:8082"
@@ -96,6 +110,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        GOSUMDB: ${GOSUMDB:-sum.golang.google.cn}
+        GO_IMAGE: ${GO_IMAGE:-golang:1.25.7-alpine}
+        RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
+        APK_MIRROR: ${APK_MIRROR:-mirrors.aliyun.com}
     working_dir: /app
     environment:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
