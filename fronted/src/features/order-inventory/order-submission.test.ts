@@ -1,7 +1,36 @@
 import { describe, expect, it, vi } from 'vitest'
-import { prepareOrderSubmission } from './order-submission'
+import {
+  createIdempotencyKey,
+  prepareOrderSubmission,
+} from './order-submission'
 
 const payload = { items: [{ product_id: 1, quantity: 2 }] }
+
+describe('createIdempotencyKey', () => {
+  it('falls back when randomUUID is unavailable (plain HTTP hosts)', () => {
+    const original = globalThis.crypto
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: {
+        getRandomValues: (bytes: Uint8Array) => {
+          bytes.fill(7)
+          return bytes
+        },
+      },
+    })
+
+    try {
+      const key = createIdempotencyKey()
+      expect(key.startsWith('idem-')).toBe(true)
+      expect(key.length).toBeGreaterThan(10)
+    } finally {
+      Object.defineProperty(globalThis, 'crypto', {
+        configurable: true,
+        value: original,
+      })
+    }
+  })
+})
 
 describe('prepareOrderSubmission', () => {
   it('reuses the key when an unchanged request is retried', () => {

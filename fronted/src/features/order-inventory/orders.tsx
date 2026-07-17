@@ -36,7 +36,7 @@ import {
   LoadingRow,
   OrderStatusBadge,
 } from './components'
-import { formatDateTime, formatFen } from './format'
+import { formatDateTime, formatFen, PRODUCT_STATUS } from './format'
 import {
   isOrderActionAllowed,
   requiresOrderActionConfirmation,
@@ -81,8 +81,9 @@ export function OrdersPage() {
     placeholderData: (previousData) => previousData,
   })
   const productsQuery = useQuery({
-    queryKey: queryKeys.products(1),
-    queryFn: () => productApi.list(1),
+    // status=1 is on-sale; must not pass page as the first arg (that was status).
+    queryKey: queryKeys.products(PRODUCT_STATUS.ON_SALE),
+    queryFn: () => productApi.list(PRODUCT_STATUS.ON_SALE),
   })
 
   const orderDetailQuery = useQuery({
@@ -186,12 +187,16 @@ export function OrdersPage() {
     event.preventDefault()
     const payload = parseCreateOrderPayload()
     if (!payload) return
-    const submission = prepareOrderSubmission(payload, pendingSubmission)
-    setPendingSubmission(submission)
-    createOrderMutation.mutate({
-      payload,
-      idempotencyKey: submission.idempotencyKey,
-    })
+    try {
+      const submission = prepareOrderSubmission(payload, pendingSubmission)
+      setPendingSubmission(submission)
+      createOrderMutation.mutate({
+        payload,
+        idempotencyKey: submission.idempotencyKey,
+      })
+    } catch (error) {
+      toast.error(getErrorMessage(error) || '生成幂等键失败，请重试')
+    }
   }
 
   const orders = ordersQuery.data?.orders ?? []
@@ -232,17 +237,28 @@ export function OrdersPage() {
                     >
                       <Field label={index === 0 ? '商品' : ' '}>
                         <Select
-                          value={item.product_id}
+                          value={item.product_id || undefined}
                           onValueChange={(value) =>
                             updateItem(index, {
                               product_id: value,
                             })
                           }
                         >
-                          <SelectTrigger>
+                          <SelectTrigger className='w-full'>
                             <SelectValue placeholder='请选择商品' />
                           </SelectTrigger>
                           <SelectContent>
+                            {productsQuery.isLoading && (
+                              <SelectItem value='__loading' disabled>
+                                商品加载中…
+                              </SelectItem>
+                            )}
+                            {!productsQuery.isLoading &&
+                              onSaleProducts.length === 0 && (
+                                <SelectItem value='__empty' disabled>
+                                  暂无已上架商品
+                                </SelectItem>
+                              )}
                             {onSaleProducts.map((product) => (
                               <SelectItem
                                 key={product.id}
@@ -299,9 +315,17 @@ export function OrdersPage() {
                     添加商品
                   </Button>
                   <Button
+                    type='submit'
                     className='flex-1'
-                    disabled={createOrderMutation.isPending}
+                    disabled={
+                      createOrderMutation.isPending ||
+                      productsQuery.isLoading ||
+                      onSaleProducts.length === 0
+                    }
                   >
+                    {createOrderMutation.isPending && (
+                      <Loader2 className='animate-spin' />
+                    )}
                     提交订单
                   </Button>
                 </div>
