@@ -15,6 +15,11 @@ DB_PORT ?= 3306
 DB_USER ?= root
 DB_NAME ?= go_order_management_system
 MIGRATION_DSN ?= $(DB_USER):$(MYSQL_PASSWORD)@tcp($(DB_HOST):$(DB_PORT))/$(DB_NAME)?parseTime=true
+LOADTEST_URL ?= http://127.0.0.1:8082/ping
+LOADTEST_REQUESTS ?= 200
+LOADTEST_CONCURRENCY ?= 20
+LOADTEST_TIMEOUT ?= 5s
+LOADTEST_REPORT ?= docs/evidence/loadtest_report.md
 
 ifeq ($(OS),Windows_NT)
 BINARY := $(BIN_DIR)/$(APP_NAME).exe
@@ -22,7 +27,7 @@ else
 BINARY := $(BIN_DIR)/$(APP_NAME)
 endif
 
-.PHONY: help run ui-run dev build clean \
+.PHONY: help run ui-run dev build clean load-test \
 	fmt vet lint tidy mod-download mod-verify \
 	test test-verbose test-service test-dao test-migrations test-redis test-order-timeout test-all test-race coverage coverage-html \
 	check compose-config infra-up infra-down infra-ps infra-logs \
@@ -38,6 +43,7 @@ help:
 	@echo   ui-run          Run the front locally
 	@echo   dev             Start MySQL/Redis/RabbitMQ, then run the API
 	@echo   build           Build the API binary into $(BIN_DIR)/
+	@echo   load-test       Run a simple HTTP load test against LOADTEST_URL
 	@echo   clean           Remove generated build and coverage files
 	@echo Quality:
 	@echo   fmt             Format all Go packages
@@ -99,6 +105,9 @@ else
 	mkdir -p "$(BIN_DIR)"
 endif
 	$(GO) build -trimpath -o "$(BINARY)" ./cmd
+
+load-test:
+	$(GO) run ./cmd/loadtest -url "$(LOADTEST_URL)" -requests $(LOADTEST_REQUESTS) -concurrency $(LOADTEST_CONCURRENCY) -timeout $(LOADTEST_TIMEOUT) -output "$(LOADTEST_REPORT)"
 
 clean:
 ifeq ($(OS),Windows_NT)
