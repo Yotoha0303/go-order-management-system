@@ -20,6 +20,7 @@ sequenceDiagram
     participant C as Client
     participant H as Handler
     participant S as OrderService
+    participant R as Redis
     participant DB as MySQL
 
     C->>H: POST /orders + JWT + idempotency_key
@@ -39,8 +40,14 @@ sequenceDiagram
         end
     else 首次创建
         S->>DB: 创建 orders
+        S->>DB: 查询商品并校验上架状态
+        S->>R: Lua 预扣 Redis 可售库存并写 reservation
+        alt Redis miss / 不可用
+            S->>S: 降级继续走 MySQL
+        else Redis 库存不足
+            S-->>H: 返回库存不足
+        end
         loop 每个商品项
-            S->>DB: 查询商品并校验上架状态
             S->>DB: SELECT inventory FOR UPDATE
             S->>DB: 条件扣减库存 stock_quantity >= quantity
             S->>DB: 创建 order_items
@@ -70,6 +77,8 @@ sequenceDiagram
 9. 更新幂等记录为已创建并关联订单 ID。
 10. 写入订单超时 Outbox，截止时间为订单创建时间加 30 分钟。
 
+Redis 预扣不属于 MySQL 事务，但和事务结果有补偿关系：事务失败时回补 Redis reservation；订单取消时回补 reservation；支付成功时删除 reservation。
+
 这样可以避免以下不一致状态：
 
 - 订单创建成功，但库存没有扣减。
@@ -82,7 +91,17 @@ sequenceDiagram
 
 创建订单时，库存扣减同时使用两层保护：
 
-### 4.1 行锁读取库存
+### 4.1 Redis Lua 预扣
+
+首次创建订单时，服务端会先用 Lua 原子检查 Redis 可售库存并批量预扣。预扣成功后写入 `inventory:{stock}:reservation:{order_id}`，用于事务失败或订单取消时补偿。
+
+Redis 的定位是软保护层：
+
+- Redis key 缺失或 Redis 不可用时，下单降级走 MySQL。
+- Redis 判断库存不足时，可以提前拒绝请求，减少热点库存对数据库的压力。
+- MySQL 仍是库存事实源，最终扣减仍要经过数据库行锁和条件更新。
+
+### 4.2 行锁读取库存
 
 通过 `SELECT ... FOR UPDATE` 锁定当前商品的库存记录，保证同一事务内看到的库存变化具有排他性。
 
@@ -92,7 +111,7 @@ sequenceDiagram
 - 需要计算扣减后库存 `after_quantity`。
 - 需要写入完整库存流水。
 
-### 4.2 条件扣减库存
+### 4.3 条件扣减库存
 
 实际扣减时使用类似以下条件：
 
@@ -124,6 +143,8 @@ flowchart TD
 ```
 
 取消订单时需要回滚库存并写入 `biz_type = 4` 的库存流水。这样可以保证库存变化有完整来源记录。
+
+如果该订单存在 Redis 预扣 reservation，取消成功后会回补 Redis 可售库存并删除 reservation；如果 reservation 不存在，则只回滚 MySQL，不凭空创建 Redis 库存 key。
 
 ## 6. 订单状态机
 

@@ -187,3 +187,24 @@ biz_type 说明：
 2. `(published_at, next_attempt_at)` 索引支持发布器扫描待发送事件
 3. `order_id` 唯一约束防止幂等重放创建重复超时事件
 4. Publisher Confirm 成功后才更新 `published_at`，失败事件按时间重试
+
+## 11. operation_logs 后台操作日志表
+
+用途：记录管理员后台操作，用于审计和排障。
+
+核心字段：
+
+- user_id / username：操作人
+- action：操作动作，格式为 `METHOD route`
+- method / path / route：HTTP 方法、真实请求路径和 Gin 路由模板
+- http_status：业务接口最终 HTTP 状态
+- request_id：关联 access log 的请求 ID
+- client_ip / user_agent：客户端来源信息
+- created_at：操作时间
+
+设计说明：
+
+1. 只记录通过管理员鉴权后的后台接口调用
+2. 不记录请求体，避免敏感信息落库
+3. `(user_id, created_at)`、`(action, created_at)` 和 `created_at` 索引用于按操作人、动作和时间倒序查询
+4. 操作日志写入失败不回滚原业务请求，避免审计系统故障影响商品、库存等主流程

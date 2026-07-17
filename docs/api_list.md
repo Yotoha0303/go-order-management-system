@@ -7,6 +7,7 @@
 | GET | /ping | 基础连通性检查 |
 | GET | /live | 进程存活检查 |
 | GET | /readyz | 数据库就绪检查；未就绪时返回 503 / 5001 |
+| GET | /metrics | Prometheus 文本格式指标；包含 HTTP 请求、订单业务和 Redis 预扣指标 |
 
 除健康检查、注册和登录外，以下业务接口均要求请求头：`Authorization: Bearer <access_token>`。
 
@@ -32,6 +33,8 @@
 |---|---|---|---|
 | POST | /api/v1/inventory/init | 管理员 | 初始化库存 |
 | POST | /api/v1/inventory/add | 管理员 | 增加库存 |
+| GET | /api/v1/inventory/redis/reconcile | 管理员 | 对比 MySQL 当前库存和 Redis 可售库存，返回差异报告 |
+| POST | /api/v1/inventory/redis/rebuild | 管理员 | 按 MySQL 当前库存重建 Redis 可售库存 |
 | GET | /api/v1/inventory/products/:product_id | 登录用户 | 查询商品库存 |
 
 ## 4. 库存流水模块
@@ -40,7 +43,15 @@
 |---|---|---|---|
 | GET | /api/v1/stock-logs | 管理员 | 查询库存流水，product_id 可选 |
 
-## 5. 用户与鉴权模块
+## 5. 后台审计模块
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | /api/v1/operation-logs?page=1&page_size=20 | 管理员 | 查询管理员后台操作日志；支持 `user_id` 和 `action` 可选筛选 |
+
+管理操作日志只记录操作者、动作、路由、HTTP 状态、请求 ID、客户端 IP 和时间，不记录请求体。
+
+## 6. 用户与鉴权模块
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
@@ -52,7 +63,7 @@
 
 登录和当前用户接口的用户对象包含 `roles` 字段，例如 `"roles":["user"]`。前端可据此隐藏管理入口，但最终权限判断以后端为准。
 
-## 6. 订单模块
+## 7. 订单模块
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
@@ -67,4 +78,4 @@
 
 鉴权请求头：`Authorization: Bearer <access_token>`。未登录返回 401；访问其他用户订单返回 404，避免暴露订单是否存在。
 
-商品、库存和库存流水等管理员接口在角色不足时返回 403；角色查询失败时返回 500，避免把系统故障误判为无权限。
+商品、库存、库存流水和操作日志等管理员接口在角色不足时返回 403；角色查询失败时返回 500，避免把系统故障误判为无权限。

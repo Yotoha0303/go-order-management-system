@@ -37,12 +37,21 @@ flowchart LR
 | 问题 | 解决方式 | 项目价值 |
 | --- | --- | --- |
 | 重复提交导致重复订单 | `(user_id, idempotency_key)` 唯一索引 + SHA-256 请求摘要 | 避免用户重复点击、客户端重试造成重复下单和重复扣库存 |
+| 热点库存直接打 DB | Redis Lua 原子预扣 + reservation 补偿 | 在 MySQL 事务前增加软保护，降低热点请求直接进入数据库扣减 |
 | 并发下单导致超卖 | MySQL 事务 + `SELECT ... FOR UPDATE` + `stock_quantity >= quantity` 条件扣减 | 保证库存不会被扣成负数 |
 | 多表写入不一致 | 幂等记录、订单、订单项、库存、库存流水放在同一事务 | 任一步失败时整体回滚 |
 | 订单越权访问 | 订单查询和状态变更同时匹配当前登录用户 `user_id` | 防止用户访问或操作他人订单 |
 | 非法订单状态流转 | service 层状态机 + DAO 条件状态更新 | 限制待支付、已支付、已完成、已取消之间的合法流转 |
+| 多商品下单死锁风险 | 下单事务内按 `product_id` 升序处理商品与库存行锁 | 降低不同请求商品顺序不一致造成的循环等待 |
 | 商品详情重复查询 | Redis cache-aside 缓存 + 商品上下架删除缓存 | 减少热点商品详情对 MySQL 的重复访问 |
 | 待支付订单长期占用库存 | 事务 Outbox + RabbitMQ TTL/DLX + 幂等消费者 | 订单创建 30 分钟后仍未支付则自动取消并回补库存 |
+| 管理操作不可追踪 | 管理员接口写入 `operation_logs`，并用 Request ID 关联 access log | 支持后台审计和排障 |
+| 请求和业务状态不可见 | `/metrics` 输出 HTTP、订单创建、状态流转和 Redis 预扣指标 | 支持本地和容器环境采集基础运行指标 |
+| 请求链路难关联 | 兼容 W3C `traceparent`，access log 输出 `trace_id/span_id` | 为后续接入 OpenTelemetry 或追踪后端做准备 |
+| 慢 SQL 难定位 | GORM 接入 `slog` 慢查询日志，可配置阈值和日志等级 | 为后续 EXPLAIN 分析和性能报告提供入口 |
+| Redis 库存 key 丢失 | 管理员可查看 Redis/MySQL 差异报告，并按 MySQL 当前库存重建 Redis 可售库存 | Redis 重启或 key 缺失后可快速恢复预扣能力 |
+| Redis/MySQL 库存不一致不可见 | 后台 worker 定时对账并记录差异日志 | 及时发现 Redis 软保护层与 MySQL 事实源的偏差 |
+| Redis Cluster 多 key Lua 跨 slot | 库存预扣 key 使用固定 hash tag `{stock}` | 多商品预扣和 reservation 操作可落在同一 slot |
 
 ## 核心功能
 
@@ -73,6 +82,8 @@ flowchart LR
 ### 订单模块
 
 - 使用 `idempotency_key` 幂等创建订单
+- 使用 Redis Lua 预扣库存；Redis 不可用或 key 缺失时降级走 MySQL
+- 库存预扣 key 使用 `inventory:{stock}:...` 固定 hash tag，降低 Redis Cluster 跨 slot 风险
 - 创建订单时扣减库存
 - 库存不足时事务回滚
 - 查询订单列表和订单详情
@@ -81,10 +92,13 @@ flowchart LR
 - 订单状态机限制非法状态流转
 - 待支付超过 30 分钟后由 RabbitMQ 触发自动取消和库存回补
 - 创建订单与超时 Outbox 同事务提交，发布使用 Publisher Confirm，消费使用手动 ACK
+- Redis 预扣成功后写 reservation；事务失败或取消订单时回补 Redis，支付成功时清理 reservation
+- 管理员可触发 Redis/MySQL 库存差异报告和 Redis 可售库存重建，重建数据来源为 MySQL 当前库存
+- 后台 worker 定时执行 Redis/MySQL 库存对账，发现差异只记录日志，不自动重建
 
 ### 前端管理台
 
-- React 管理台已接入商品、库存、库存流水、订单和用户资料接口
+- React 管理台已接入商品、库存、库存流水、操作日志、订单和用户资料接口
 - 首页作为项目展示页，突出后端健康状态、订单摘要、库存流水和工程能力点
 - 可完整演示商品准备、库存初始化、用户下单、支付、取消、库存回滚等业务流程
 
@@ -175,6 +189,7 @@ Makefile                  开发、测试、Docker 和迁移命令入口
 | `order_items` | 订单明细表 | 保存商品名称、价格快照和数量 |
 | `order_idempotency_keys` | 订单幂等表 | `(user_id, idempotency_key)` 复合唯一索引 + `request_hash` |
 | `order_timeout_outbox` | 订单超时 Outbox | 与订单同事务写入，记录发布时间、重试次数和超时截止点 |
+| `operation_logs` | 后台操作日志表 | 记录管理员动作、路由、HTTP 状态、请求 ID 和来源信息 |
 
 详细表结构见：[docs/table_design.md](docs/table_design.md)
 
@@ -191,12 +206,17 @@ Makefile                  开发、测试、Docker 和迁移命令入口
 - HTTP Server 设置 ReadTimeout、WriteTimeout、IdleTimeout、ReadHeaderTimeout 和 MaxHeaderBytes
 - MySQL 初始化时配置连接池：MaxOpenConns、MaxIdleConns、ConnMaxLifetime、ConnMaxIdleTime
 - 启动时使用 PingContext 检查 MySQL 连通性
-- 请求层使用 Request ID、Access Log、Recovery 和超时中间件
+- GORM 慢 SQL 日志默认记录超过 `mysql.slowThreshold` 的 SQL，日志等级可通过 `mysql.logLevel` 或环境变量覆盖
+- 请求层使用 Request ID、Trace Context、Access Log、Recovery 和超时中间件
+- Access Log 输出 request_id、trace_id 和 span_id；超时响应也会补充 `traceparent`
 - Redis 不可用时商品详情缓存自动降级，不影响主流程
+- Redis 库存 key 采用固定 hash tag；旧格式 Redis key 升级后可通过管理员重建接口刷新
 - RabbitMQ 使用 TTL + DLX 延迟投递；发布端 Confirm、消费端手动 ACK，重复消息由订单状态条件更新消解
+- `/metrics` 暴露 Prometheus 文本格式指标，覆盖 HTTP 请求、订单创建、订单状态流转和 Redis 预扣结果
 - Dockerfile 使用多阶段构建和非 root 用户运行应用
 - Docker Compose 编排应用、MySQL、Redis 和 RabbitMQ，并通过健康检查控制依赖启动顺序
 - Goose 管理数据库版本，Makefile 统一封装开发、测试、Docker 和迁移命令
+- 内置 HTTP 压测命令，可生成 Markdown 性能报告；已提交 [本地 Docker 读链路压测与 SQL 分析](docs/evidence/loadtest_summary_2026-07-11.md)，数字仅作为同机基线
 - CI 覆盖 go test、go test -race、go vet、golangci-lint、goose validate 和 go build
 
 ## 快速启动
@@ -219,11 +239,16 @@ go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
 
 ```env
 MYSQL_PASSWORD=your-password
+DB_SLOW_THRESHOLD=200ms
+DB_LOG_LEVEL=warn
 JWT_SECRET=replace-with-at-least-32-random-characters
 JWT_EXPIRE_HOURS=24
 REDIS_PASSWORD=
 RABBITMQ_URL=amqp://order_app:order_dev_password@127.0.0.1:5672/
 ORDER_TIMEOUT_DELAY=30m
+INVENTORY_RECONCILE_ENABLED=true
+INVENTORY_RECONCILE_INTERVAL=5m
+INVENTORY_RECONCILE_TIMEOUT=3s
 ```
 
 不要提交真实 `.env`，可从 [.env.example](.env.example) 复制后修改。
@@ -250,6 +275,7 @@ make run
 curl http://localhost:8082/ping
 curl http://localhost:8082/live
 curl http://localhost:8082/readyz
+curl http://localhost:8082/metrics
 ```
 
 ### Docker 运行完整服务
@@ -286,6 +312,7 @@ npm run dev
 | `make docker-build` | 构建应用镜像 |
 | `make docker-up` | 构建并启动应用、MySQL、Redis、RabbitMQ |
 | `make docker-down` | 停止并移除容器，保留数据卷 |
+| `make load-test` | 对 `LOADTEST_URL` 执行 HTTP 压测并输出 Markdown 报告 |
 | `make test` | 运行全部 Go 测试 |
 | `make test-service` | 运行 MySQL service 集成测试 |
 | `make test-dao` | 运行关键 DAO MySQL 集成测试 |
@@ -305,9 +332,11 @@ service 测试会清理所连接数据库中的业务表。必须使用独立测
 - 商品、库存、订单创建、状态机和关键异常分支
 - 并发下单防超卖
 - 多商品事务回滚
+- 多商品订单按 `product_id` 升序处理，降低锁顺序风险
 - 创建订单幂等：同 Key 重放、不同请求冲突、并发同 Key、失败回滚后重试
 - 订单状态并发：并发支付、并发取消、支付与取消竞争
 - Redis 商品详情缓存命中、删除和降级
+- Redis Lua 库存预扣、库存不足拒绝、reservation 回补和支付确认清理
 
 手动接口测试文件位于 [docs/http](docs/http)，完整业务链路见 [docs/http/demo_flow.http](docs/http/demo_flow.http)。测试计划见 [docs/test_plan.md](docs/test_plan.md)。
 
@@ -322,6 +351,8 @@ service 测试会清理所连接数据库中的业务表。必须使用独立测
 - [docs/test_plan.md](docs/test_plan.md)：测试计划
 - [docs/test_result.md](docs/test_result.md)：测试结果记录
 - [docs/project_evolution.md](docs/project_evolution.md)：后续演进
+- [docs/observability.md](docs/observability.md)：可观测性指标和告警建议
+- [docs/performance.md](docs/performance.md)：压测工具和慢 SQL 分析流程
 - [docs/interview_guide.md](docs/interview_guide.md)：简历描述、项目讲解和面试追问
 - [docs/evidence](docs/evidence)：项目运行、测试与关键业务截图证据
 
@@ -333,6 +364,6 @@ service 测试会清理所连接数据库中的业务表。必须使用独立测
 
 - 增加订单列表状态筛选和时间范围筛选
 - 扩展 handler 边界测试和 DAO 集成测试覆盖
-- 增加 Prometheus 指标、结构化日志字段规范和链路追踪
+- 增加线上告警配置证据、结构化日志字段规范和链路追踪
 - 为幂等记录增加过期清理策略
-- 增加操作日志，记录管理员对商品与库存的变更
+- 增加操作日志高级筛选、导出和留存策略

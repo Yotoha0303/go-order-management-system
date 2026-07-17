@@ -5,7 +5,8 @@ AGENTS.md
 tools
 bin/
 coverage.*
-docs/evidence
+docs/evidence/*
+!docs/evidence/*.md
 
 # Tool-generated atomic-write backups (for example, config.go.123456789).
 *.go.[0-9]*

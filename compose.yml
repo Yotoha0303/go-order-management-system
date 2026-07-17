@@ -39,8 +39,6 @@ services:
   mysql:
     image: mysql:8.4
     container_name: go-order-management-system-mysql
-    ports:
-      - "${MYSQL_HOST_PORT:-3306}:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
       MYSQL_DATABASE: ${DB_NAME:-go-order-management-system}

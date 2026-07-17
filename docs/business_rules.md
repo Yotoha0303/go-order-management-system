@@ -71,7 +71,17 @@
 7. biz_type = 3 表示订单扣减库存
 8. biz_type = 4 表示取消订单回滚库存
 
-## 4. 用户与鉴权模块
+## 4. 后台操作审计
+
+规则：
+
+1. 商品创建、商品上下架、库存初始化、增加库存、库存流水查询和操作日志查询均需要管理员权限
+2. 管理员鉴权通过后的后台请求写入 `operation_logs`
+3. 操作日志记录操作者、动作、路由、HTTP 状态、请求 ID、客户端 IP 和时间
+4. 操作日志不记录请求体
+5. 操作日志写入失败不影响原业务接口返回
+
+## 5. 用户与鉴权模块
 
 规则：
 
@@ -80,7 +90,7 @@
 3. JWT Secret 至少 32 个字符，令牌必须包含有效 user_id、username、issuer、issued_at 和 expires_at
 4. 用户资料与订单接口从 JWT 身份读取 user_id，不接受客户端自行提交用户 ID
 
-## 5. 订单模块
+## 6. 订单模块
 
 ### 创建订单
 
@@ -99,6 +109,9 @@
 11. 同一用户相同 idempotency_key 和不同请求内容返回冲突；不同用户可使用相同 Key
 12. 幂等记录、创建订单、扣减库存、创建订单项、写库存流水、写订单超时 Outbox 必须在同一个事务内完成
 13. 查询、支付、完成、取消都必须同时匹配 order_id 和当前 user_id
+14. 多商品订单在事务内按 product_id 升序处理商品和库存行锁，降低不同请求商品顺序不一致造成的死锁风险
+15. 首次创建订单时，Redis Lua 可先预扣可售库存；Redis 不可用或 key 缺失时降级走 MySQL
+16. Redis 预扣成功但 MySQL 事务失败时，必须按 reservation 回补 Redis
 
 ### 支付订单
 
@@ -137,6 +150,8 @@
 
 取消订单时需要回滚库存，并写入 biz_type = 4 的库存流水。
 
+若订单存在 Redis 预扣 reservation，取消成功后需要回补 Redis 可售库存并删除 reservation。
+
 ### 取消订单幂等规则
 
 已取消订单再次调用取消接口时，直接返回成功，不重复回滚库存。
@@ -155,7 +170,7 @@
 4. 创建订单和超时 Outbox 必须同事务提交，避免订单成功但延迟消息丢失
 5. RabbitMQ 消息允许至少一次投递，消费者通过 `pending -> cancelled` 条件更新防止重复回补库存
 
-## 6. Redis 缓存
+## 7. Redis 缓存
 
 ### 商品模块
 
@@ -163,5 +178,34 @@
 1. 查询商品时，设置商品缓存
 2. 上架或下架商品时，商品缓存删除
 3. Redis 不启用或者启动异常，不会影响商品模块的正常查询
+
+### 库存预扣
+
+规则：
+
+1. 初始化库存和手动入库成功后，同步 Redis 可售库存 key
+2. 下单时使用 Redis Lua 对多个商品做原子预扣
+3. Redis miss 或 Redis 异常时，下单降级走 MySQL 事务
+4. Redis 判断库存不足时，提前返回库存不足
+5. 支付成功后删除 reservation，不回补 Redis
+6. 取消订单和超时取消成功后，按 reservation 回补 Redis
+7. 管理员可生成 Redis/MySQL 库存差异报告
+8. 管理员可按 MySQL 当前库存重建 Redis 可售库存
+9. 后台 worker 定时执行 Redis/MySQL 库存对账，发现差异只记录日志，不自动改库存
+10. Redis 不是库存事实源，最终库存仍以 MySQL 为准
+
+## 8. 可观测性
+
+规则：
+
+1. 每个请求都生成或透传 `X-Request-ID`
+2. 每个请求都生成或透传 W3C `traceparent`
+3. Access Log 记录 request_id、trace_id、span_id、method、path、route、status、latency、client_ip 和 body_size
+4. `/metrics` 输出 Prometheus 文本格式指标
+5. HTTP 指标按 method、route、status 聚合请求数和耗时汇总，route 使用 Gin 路由模板，避免真实 ID 造成高基数
+6. 业务指标记录订单创建、订单状态流转、Redis 预扣、reservation 和库存同步结果
+7. 指标 label 使用有限枚举，不写入动态错误文本、用户 ID、订单 ID 或商品 ID
+8. 指标端点不记录请求体，不暴露用户密码、Token 或订单明细
+9. GORM 慢 SQL 日志和 Redis 自动对账日志用于排障，不改变接口响应格式
 
 
