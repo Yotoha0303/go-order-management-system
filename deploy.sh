@@ -179,7 +179,7 @@ prepare_env_file() {
   ensure_env_key "RABBITMQ_PASSWORD" "order_dev_password"
   ensure_env_key "JWT_EXPIRE_HOURS" "24"
   # Mainland-friendly Docker build defaults (Compose passes these as build args).
-  ensure_env_key "GOPROXY" "https://goproxy.cn,direct"
+  ensure_env_key "GOPROXY" "https://goproxy.cn,direct,https://goproxy.io,direct"
   ensure_env_key "GOSUMDB" "sum.golang.google.cn"
   ensure_env_key "APK_MIRROR" "mirrors.aliyun.com"
 
@@ -208,7 +208,7 @@ start_backend_stack() {
   # shellcheck disable=SC1091
   source .env
   set +a
-  export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
+  export GOPROXY="${GOPROXY:-https://goproxy.cn,direct,https://goproxy.io,direct}"
   export GOSUMDB="${GOSUMDB:-sum.golang.google.cn}"
   export APK_MIRROR="${APK_MIRROR:-mirrors.aliyun.com}"
   echo "Build args: GOPROXY=${GOPROXY} GOSUMDB=${GOSUMDB} APK_MIRROR=${APK_MIRROR}"

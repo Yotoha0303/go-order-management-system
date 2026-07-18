@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1
 
+# Single multi-stage image for local Compose and cloud deploy (deploy.sh).
+#
 # Mainland China defaults for module download. Override when building overseas:
 #   docker build --build-arg GOPROXY=https://proxy.golang.org,direct --build-arg GOSUMDB=sum.golang.org .
-ARG GOPROXY=https://goproxy.cn,direct
-ARG GOSUMDB=sum.golang.google.cn
 # Optional base-image rewrite for private mirrors, e.g. docker.m.daocloud.io/library
 #   docker build --build-arg GO_IMAGE=docker.m.daocloud.io/library/golang:1.25.7-alpine .
+ARG GOPROXY=https://goproxy.cn,direct,https://goproxy.io,direct
+ARG GOSUMDB=sum.golang.google.cn
 ARG GO_IMAGE=golang:1.25.7-alpine
 ARG RUNTIME_IMAGE=alpine:3.22
 
@@ -22,11 +24,14 @@ ENV GOPROXY=${GOPROXY} \
 WORKDIR /app
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 COPY . .
 
-RUN go build -trimpath -o go-order-management-system ./cmd
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -trimpath -o go-order-management-system ./cmd
 
 FROM ${GO_IMAGE} AS goose-builder
 

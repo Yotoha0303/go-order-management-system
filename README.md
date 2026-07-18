@@ -155,7 +155,7 @@ pkg/database/             MySQL 初始化与连接池
 pkg/redis/                Redis 客户端初始化
 router/                   路由注册
 compose.yml               应用、MySQL、Redis、RabbitMQ 编排
-Dockerfile                应用镜像多阶段构建
+Dockerfile                应用镜像多阶段构建（本地与云部署共用）
 Makefile                  开发、测试、Docker 和迁移命令入口
 ```
 
@@ -289,7 +289,7 @@ make docker-up
 
 `make docker-up` 会构建应用镜像，启动 MySQL、Redis、RabbitMQ 和应用，并执行数据库迁移。
 
-应用镜像构建默认面向中国大陆网络：`GOPROXY=goproxy.cn`、`GOSUMDB=sum.golang.google.cn`、Alpine 使用阿里云源。海外可覆盖：
+应用镜像构建默认面向中国大陆网络：`GOPROXY=goproxy.cn`（含 goproxy.io 兜底）、`GOSUMDB=sum.golang.google.cn`、Alpine 使用阿里云源；本地与云部署共用同一 Dockerfile。海外可覆盖：
 
 ```bash
 GOPROXY=https://proxy.golang.org,direct GOSUMDB=sum.golang.org APK_MIRROR=dl-cdn.alpinelinux.org make docker-up

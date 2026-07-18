@@ -52,7 +52,7 @@ sudo NONINTERACTIVE=1 ./deploy.sh
 | `SKIP_FIREWALL` | `0` | `1` 时不改 UFW |
 | `SKIP_FRONTEND` | `0` | `1` 时不构建前端（仅后端 + API 反代） |
 | `API_PORT` | `8082` | 本机后端监听端口（与 Compose 一致） |
-| `GOPROXY` | `https://goproxy.cn,direct` | Go 模块代理（Dockerfile / Compose build arg） |
+| `GOPROXY` | `https://goproxy.cn,direct,https://goproxy.io,direct` | Go 模块代理（Dockerfile / Compose build arg） |
 | `GOSUMDB` | `sum.golang.google.cn` | Go checksum 数据库 |
 | `APK_MIRROR` | `mirrors.aliyun.com` | Alpine `apk` 源主机名 |
 | `GO_IMAGE` / `RUNTIME_IMAGE` | 官方 tag | 可改写为镜像站前缀，见下文 |
@@ -64,13 +64,24 @@ sudo NONINTERACTIVE=1 ./deploy.sh
 sudo NONINTERACTIVE=1 SKIP_SYSTEM_UPDATE=1 SKIP_DOCKER_MIRROR=1 ./deploy.sh
 ```
 
+## 应用镜像
+
+本地 Compose 与云主机部署共用根目录唯一的 [`Dockerfile`](../Dockerfile)（多阶段构建：应用二进制 + goose + 运行时依赖）。差异通过 build-arg / 环境变量表达，不要再维护第二份 Dockerfile。
+
+| build-arg | 默认 | 说明 |
+| --- | --- | --- |
+| `GOPROXY` | `https://goproxy.cn,direct,https://goproxy.io,direct` | Go 模块代理链 |
+| `GOSUMDB` | `sum.golang.google.cn` | 校验和数据库（生产勿默认 `off`） |
+| `GO_IMAGE` / `RUNTIME_IMAGE` | 官方 tag | 可改写为镜像站前缀 |
+| `APK_MIRROR` | `mirrors.aliyun.com` | Alpine `apk` 源主机名 |
+
 ## 中国大陆网络说明
 
 构建应用镜像时，默认按大陆网络优化：
 
 | 环节 | 默认策略 |
 | --- | --- |
-| Go 模块 | `GOPROXY=https://goproxy.cn,direct` |
+| Go 模块 | `GOPROXY=https://goproxy.cn,direct,https://goproxy.io,direct` |
 | 校验和 | `GOSUMDB=sum.golang.google.cn` |
 | Alpine 包 | `APK_MIRROR=mirrors.aliyun.com` |
 | Docker 基础镜像 / 依赖镜像 | `deploy.sh` 写入 registry-mirrors（DaoCloud、腾讯云） |

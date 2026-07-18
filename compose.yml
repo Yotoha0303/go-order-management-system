@@ -1,5 +1,5 @@
 # Build args (China-friendly defaults live in Dockerfile; override via .env if needed):
-#   GOPROXY=https://goproxy.cn,direct
+#   GOPROXY=https://goproxy.cn,direct,https://goproxy.io,direct
 #   GOSUMDB=sum.golang.google.cn
 #   GO_IMAGE=golang:1.25.7-alpine
 #   RUNTIME_IMAGE=alpine:3.22
@@ -13,7 +13,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct,https://goproxy.io,direct}
         GOSUMDB: ${GOSUMDB:-sum.golang.google.cn}
         GO_IMAGE: ${GO_IMAGE:-golang:1.25.7-alpine}
         RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
@@ -111,7 +111,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct,https://goproxy.io,direct}
         GOSUMDB: ${GOSUMDB:-sum.golang.google.cn}
         GO_IMAGE: ${GO_IMAGE:-golang:1.25.7-alpine}
         RUNTIME_IMAGE: ${RUNTIME_IMAGE:-alpine:3.22}
