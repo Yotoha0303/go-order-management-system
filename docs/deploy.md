@@ -105,6 +105,24 @@ export APK_MIRROR=dl-cdn.alpinelinux.org
 docker compose build
 ```
 
+### 本地 Compose 验证
+
+```bash
+docker compose --env-file .env up -d --build --wait
+# 期望：migrate 退出码 0（goose version 14），app/mysql/redis/rabbitmq 均为 healthy
+curl -sS http://127.0.0.1:8082/ping
+curl -sS http://127.0.0.1:8082/readyz
+```
+
+若 `migrate` 报 `Access denied for user 'root'`，通常是 MySQL 数据卷仍使用旧密码初始化结果。确认 `.env` 中 `MYSQL_PASSWORD` 后执行：
+
+```bash
+docker compose --env-file .env down -v
+docker compose --env-file .env up -d --build --wait
+```
+
+`down -v` 会删除本项目 Compose 数据卷，仅用于可丢弃的本地环境。
+
 ## 脚本做了什么
 
 1. 安装基础包：`curl`、`git`、`ufw`、`nginx` 等  

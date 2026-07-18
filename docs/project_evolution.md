@@ -148,7 +148,7 @@
 - 商品创建、上架/下架、库存初始化、增加库存和库存流水查询已限制为管理员可用
 - 完成订单 Handler 业务接口测试和关键 DAO 集成测试
 - RabbitMQ TTL/DLX + 事务 Outbox，实现“30 分钟未支付自动取消”
-- 提供 Dockerfile、Docker Compose、Makefile 和 CI workflow，支持本地/CI 环境部署与回归验证
+- 提供单一 Dockerfile（本地 Compose 与云部署共用）、Docker Compose、Makefile 和 CI workflow，支持本地/CI 环境部署与回归验证
 
 设计重点：
 

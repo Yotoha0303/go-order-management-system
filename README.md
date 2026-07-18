@@ -213,7 +213,7 @@ Makefile                  开发、测试、Docker 和迁移命令入口
 - Redis 库存 key 采用固定 hash tag；旧格式 Redis key 升级后可通过管理员重建接口刷新
 - RabbitMQ 使用 TTL + DLX 延迟投递；发布端 Confirm、消费端手动 ACK，重复消息由订单状态条件更新消解
 - `/metrics` 暴露 Prometheus 文本格式指标，覆盖 HTTP 请求、订单创建、订单状态流转和 Redis 预扣结果
-- Dockerfile 使用多阶段构建和非 root 用户运行应用
+- 单一 Dockerfile 多阶段构建（本地 Compose 与云部署共用），非 root 运行；BuildKit 缓存与可配置 `GOPROXY`/`GOSUMDB`/`APK_MIRROR`
 - Docker Compose 编排应用、MySQL、Redis 和 RabbitMQ，并通过健康检查控制依赖启动顺序
 - Goose 管理数据库版本，Makefile 统一封装开发、测试、Docker 和迁移命令
 - 内置 HTTP 压测命令，可生成 Markdown 性能报告；已提交 [本地 Docker 读链路压测与 SQL 分析](docs/evidence/loadtest_summary_2026-07-11.md)，数字仅作为同机基线
