@@ -29,6 +29,7 @@ type MySQLConfig struct {
 	Host     string `yaml:"host"`
 	Port     string `yaml:"port"`
 	Database string `yaml:"database"`
+	TLS      string `yaml:"tls"`
 
 	MaxOpenConns    int           `yaml:"maxOpenConns"`
 	MaxIdleConns    int           `yaml:"maxIdleConns"`
@@ -116,6 +117,9 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	if v := os.Getenv("DB_NAME"); v != "" {
 		cfg.MySQL.Database = v
+	}
+	if v := os.Getenv("DB_TLS"); v != "" {
+		cfg.MySQL.TLS = v
 	}
 	if v := os.Getenv("DB_SLOW_THRESHOLD"); v != "" {
 		threshold, err := time.ParseDuration(v)

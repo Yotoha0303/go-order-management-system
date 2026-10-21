@@ -50,6 +50,18 @@ func TestApplyEnvOverridesMySQLSlowLogConfig(t *testing.T) {
 	}
 }
 
+func TestApplyEnvOverridesMySQLTLSConfig(t *testing.T) {
+	t.Setenv("DB_TLS", "true")
+
+	cfg := validConfig()
+	if err := applyEnvOverrides(&cfg); err != nil {
+		t.Fatalf("apply environment: %v", err)
+	}
+	if cfg.MySQL.TLS != "true" {
+		t.Fatalf("expected cfg.MySQL.TLS=%q, got %q", "true", cfg.MySQL.TLS)
+	}
+}
+
 func TestInventoryReconcileConfigValidate(t *testing.T) {
 	cfg := validConfig()
 

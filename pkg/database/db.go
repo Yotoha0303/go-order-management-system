@@ -6,6 +6,7 @@ import (
 	"go-order-management-system/config"
 	"log/slog"
 	"os"
+	"strings"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -48,13 +49,28 @@ func buildDSN(cfg *config.Config, dbPassword string) (string, error) {
 		return "", fmt.Errorf("database config missing")
 	}
 
-	return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
 		cfg.MySQL.User,
 		dbPassword,
 		cfg.MySQL.Host,
 		cfg.MySQL.Port,
 		cfg.MySQL.Database,
-	), nil
+	)
+
+	tlsParam := cfg.MySQL.TLS
+	if tlsParam == "" {
+		tlsParam = os.Getenv("DB_TLS")
+	}
+	// 智能默认：如果是 tidbcloud 主机，默认启用 tls=true
+	if tlsParam == "" && strings.Contains(cfg.MySQL.Host, "tidbcloud.com") {
+		tlsParam = "true"
+	}
+
+	if tlsParam != "" {
+		dsn += "&tls=" + tlsParam
+	}
+
+	return dsn, nil
 }
 
 func InitDB(cfg *config.Config) (*gorm.DB, error) {
