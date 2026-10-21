@@ -437,7 +437,7 @@ func (p *OrderService) CancelOrder(ctx context.Context, userID, orderID int64) e
 		restored = true
 		return nil
 	})
-	if err == nil && restored {
+	if err == nil && (restored || idempotent) {
 		p.restorePreDeductedInventory(context.WithoutCancel(ctx), orderID)
 	}
 	if err == nil && idempotent {
@@ -451,6 +451,7 @@ func (p *OrderService) CancelOrder(ctx context.Context, userID, orderID int64) e
 func (p *OrderService) CancelExpiredOrder(ctx context.Context, eventID string, orderID int64) error {
 	restored := false
 	ignored := false
+	alreadyCancelled := false
 	err := p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		outbox, err := dao.GetOrderTimeoutOutbox(ctx, tx, eventID, orderID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -472,6 +473,10 @@ func (p *OrderService) CancelExpiredOrder(ctx context.Context, eventID string, o
 		if err != nil {
 			return err
 		}
+		if order.Status == model.OrderStatusCancelled {
+			alreadyCancelled = true
+			return nil
+		}
 		if order.Status != model.OrderStatusPending {
 			ignored = true
 			return nil
@@ -480,10 +485,12 @@ func (p *OrderService) CancelExpiredOrder(ctx context.Context, eventID string, o
 		restored, err = cancelPendingOrder(ctx, tx, order, "订单超时取消回滚库存：")
 		return err
 	})
-	if err == nil && restored {
+	if err == nil && (restored || alreadyCancelled) {
 		p.restorePreDeductedInventory(context.WithoutCancel(ctx), orderID)
 	}
-	if err == nil && ignored {
+	if err == nil && alreadyCancelled {
+		p.recordOrderTransition("timeout_cancel", "already_cancelled")
+	} else if err == nil && ignored {
 		p.recordOrderTransition("timeout_cancel", "ignored")
 	} else {
 		p.recordOrderTransition("timeout_cancel", classifyOrderTransitionError(err))

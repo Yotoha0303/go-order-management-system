@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1910,4 +1911,297 @@ func TestCreateOrder_IdempotencyKeyRecordNotFoundInRR_ReturnsOrderBeingCreatedAn
 	if len(metrics.orderCreates) != 1 || metrics.orderCreates[0] != "idempotency_in_progress" {
 		t.Fatalf("expected metrics to record 'idempotency_in_progress', got %v", metrics.orderCreates)
 	}
+}
+
+type mockCancelCrashConnector struct {
+	orderID int64
+	userID  int64
+	eventID string
+}
+
+func (c *mockCancelCrashConnector) Connect(context.Context) (driver.Conn, error) {
+	return &mockCancelCrashConn{cfg: c}, nil
+}
+
+func (c *mockCancelCrashConnector) Driver() driver.Driver {
+	return &mockRRDriver{}
+}
+
+type mockCancelCrashConn struct {
+	cfg *mockCancelCrashConnector
+}
+
+func (c *mockCancelCrashConn) Prepare(query string) (driver.Stmt, error) {
+	return &mockCancelCrashStmt{cfg: c.cfg, query: query}, nil
+}
+
+func (c *mockCancelCrashConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	return &mockCancelCrashStmt{cfg: c.cfg, query: query}, nil
+}
+
+func (c *mockCancelCrashConn) Close() error { return nil }
+
+func (c *mockCancelCrashConn) Begin() (driver.Tx, error) {
+	return &mockRRTx{}, nil
+}
+
+func (c *mockCancelCrashConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	return &mockRRTx{}, nil
+}
+
+func (c *mockCancelCrashConn) Ping(ctx context.Context) error { return nil }
+
+func (c *mockCancelCrashConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	return driver.RowsAffected(1), nil
+}
+
+func (c *mockCancelCrashConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	return c.queryRows(query)
+}
+
+func (c *mockCancelCrashConn) queryRows(query string) (driver.Rows, error) {
+	lower := strings.ToLower(query)
+	if strings.Contains(lower, "order_timeout_outbox") {
+		return &mockOutboxRows{
+			eventID:   c.cfg.eventID,
+			orderID:   c.cfg.orderID,
+			userID:    c.cfg.userID,
+			timeoutAt: time.Now().Add(-time.Minute),
+		}, nil
+	}
+	if strings.Contains(lower, "orders") {
+		return &mockOrderRows{
+			orderID: c.cfg.orderID,
+			userID:  c.cfg.userID,
+			status:  int64(model.OrderStatusCancelled),
+		}, nil
+	}
+	return &mockRRRows{}, nil
+}
+
+type mockCancelCrashStmt struct {
+	cfg   *mockCancelCrashConnector
+	query string
+}
+
+func (s *mockCancelCrashStmt) Close() error  { return nil }
+func (s *mockCancelCrashStmt) NumInput() int { return -1 }
+func (s *mockCancelCrashStmt) Exec(args []driver.Value) (driver.Result, error) {
+	return driver.RowsAffected(1), nil
+}
+func (s *mockCancelCrashStmt) Query(args []driver.Value) (driver.Rows, error) {
+	conn := &mockCancelCrashConn{cfg: s.cfg}
+	return conn.queryRows(s.query)
+}
+
+type mockOutboxRows struct {
+	eventID   string
+	orderID   int64
+	userID    int64
+	timeoutAt time.Time
+	read      bool
+}
+
+func (r *mockOutboxRows) Columns() []string {
+	return []string{"id", "event_id", "order_id", "user_id", "timeout_at", "retry_count", "status", "next_attempt_at", "last_error", "created_at", "updated_at"}
+}
+
+func (r *mockOutboxRows) Close() error { return nil }
+
+func (r *mockOutboxRows) Next(dest []driver.Value) error {
+	if r.read {
+		return io.EOF
+	}
+	r.read = true
+	dest[0] = int64(1)
+	dest[1] = r.eventID
+	dest[2] = r.orderID
+	dest[3] = r.userID
+	dest[4] = r.timeoutAt
+	dest[5] = int64(0)
+	dest[6] = "pending"
+	dest[7] = r.timeoutAt
+	dest[8] = ""
+	dest[9] = time.Now()
+	dest[10] = time.Now()
+	return nil
+}
+
+type mockOrderRows struct {
+	orderID int64
+	userID  int64
+	status  int64
+	read    bool
+}
+
+func (r *mockOrderRows) Columns() []string {
+	return []string{"id", "user_id", "order_no", "total_amount_fen", "status", "cancelled_at", "paid_at", "completed_at", "created_at", "updated_at"}
+}
+
+func (r *mockOrderRows) Close() error { return nil }
+
+func (r *mockOrderRows) Next(dest []driver.Value) error {
+	if r.read {
+		return io.EOF
+	}
+	r.read = true
+	now := time.Now()
+	dest[0] = r.orderID
+	dest[1] = r.userID
+	dest[2] = "ORD-mock-cancel-123"
+	dest[3] = int64(100)
+	dest[4] = r.status
+	dest[5] = now
+	dest[6] = nil
+	dest[7] = nil
+	dest[8] = now
+	dest[9] = now
+	return nil
+}
+
+func TestCancelExpiredOrder_CrashRecovery_RestoresRedisReservationWhenAlreadyCancelled(t *testing.T) {
+	t.Run("integration_mysql", func(t *testing.T) {
+		if os.Getenv("RUN_MYSQL_TEST") != "1" {
+			t.Skip("skip MySQL integration test; set RUN_MYSQL_TEST=1 to run")
+		}
+		testDB := setupTestDB(t)
+		guard := &fakeInventoryPreDeductor{applied: true}
+		metrics := &fakeOrderMetrics{}
+		orderSvc := service.NewOrderServiceWithTimeoutInventoryPreDeductorAndMetrics(testDB, 30*time.Minute, guard, metrics)
+
+		ctx := seedPendingOrderContext(t, testDB)
+		now := time.Now().Add(-time.Minute)
+		if err := testDB.Model(ctx.Order).Updates(map[string]interface{}{
+			"status":       model.OrderStatusCancelled,
+			"cancelled_at": now,
+		}).Error; err != nil {
+			t.Fatalf("set order cancelled failed: %v", err)
+		}
+		var outbox model.OrderTimeoutOutbox
+		if err := testDB.Where("order_id = ?", ctx.Order.ID).First(&outbox).Error; err != nil {
+			t.Fatalf("query outbox failed: %v", err)
+		}
+		if err := testDB.Model(&outbox).Update("timeout_at", now).Error; err != nil {
+			t.Fatalf("expire outbox failed: %v", err)
+		}
+
+		err := orderSvc.CancelExpiredOrder(context.Background(), outbox.EventID, ctx.Order.ID)
+		if err != nil {
+			t.Fatalf("expected nil error on crash recovery retry, got %v", err)
+		}
+		if len(guard.restores) != 1 || guard.restores[0] != ctx.Order.ID {
+			t.Fatalf("expected 1 redis restore for order %d, got %v", ctx.Order.ID, guard.restores)
+		}
+		if len(metrics.transitions) != 1 || metrics.transitions[0] != "timeout_cancel:already_cancelled" {
+			t.Fatalf("expected metric timeout_cancel:already_cancelled, got %v", metrics.transitions)
+		}
+	})
+
+	t.Run("unit_crash_recovery_mock", func(t *testing.T) {
+		const orderID int64 = 88001
+		const userID int64 = 1
+		const eventID = "evt-crash-recovery-88001"
+
+		connector := &mockCancelCrashConnector{
+			orderID: orderID,
+			userID:  userID,
+			eventID: eventID,
+		}
+		sqlDB := sql.OpenDB(connector)
+		defer sqlDB.Close()
+
+		mockDB, err := gorm.Open(gormmysql.New(gormmysql.Config{
+			Conn:                      sqlDB,
+			SkipInitializeWithVersion: true,
+		}), &gorm.Config{
+			Logger: logger.Discard,
+		})
+		if err != nil {
+			t.Fatalf("failed to open mock gorm db: %v", err)
+		}
+
+		guard := &fakeInventoryPreDeductor{applied: true}
+		metrics := &fakeOrderMetrics{}
+		orderSvc := service.NewOrderServiceWithTimeoutInventoryPreDeductorAndMetrics(mockDB, 30*time.Minute, guard, metrics)
+
+		err = orderSvc.CancelExpiredOrder(context.Background(), eventID, orderID)
+		if err != nil {
+			t.Fatalf("expected nil error on crash recovery, got %v", err)
+		}
+		if len(guard.restores) != 1 || guard.restores[0] != orderID {
+			t.Fatalf("expected 1 redis restore for order %d, got %v", orderID, guard.restores)
+		}
+		if len(metrics.transitions) != 1 || metrics.transitions[0] != "timeout_cancel:already_cancelled" {
+			t.Fatalf("expected metric timeout_cancel:already_cancelled, got %v", metrics.transitions)
+		}
+	})
+}
+
+func TestCancelOrder_CrashRecovery_RestoresRedisReservationWhenAlreadyCancelled(t *testing.T) {
+	t.Run("integration_mysql", func(t *testing.T) {
+		if os.Getenv("RUN_MYSQL_TEST") != "1" {
+			t.Skip("skip MySQL integration test; set RUN_MYSQL_TEST=1 to run")
+		}
+		testDB := setupTestDB(t)
+		guard := &fakeInventoryPreDeductor{applied: true}
+		metrics := &fakeOrderMetrics{}
+		orderSvc := service.NewOrderServiceWithTimeoutInventoryPreDeductorAndMetrics(testDB, 30*time.Minute, guard, metrics)
+
+		ctx := seedPendingOrderContext(t, testDB)
+		now := time.Now().Add(-time.Minute)
+		if err := testDB.Model(ctx.Order).Updates(map[string]interface{}{
+			"status":       model.OrderStatusCancelled,
+			"cancelled_at": now,
+		}).Error; err != nil {
+			t.Fatalf("set order cancelled failed: %v", err)
+		}
+
+		err := orderSvc.CancelOrder(context.Background(), testUserID, ctx.Order.ID)
+		if err != nil {
+			t.Fatalf("expected nil error on idempotent cancel, got %v", err)
+		}
+		if len(guard.restores) != 1 || guard.restores[0] != ctx.Order.ID {
+			t.Fatalf("expected 1 redis restore for order %d, got %v", ctx.Order.ID, guard.restores)
+		}
+		if len(metrics.transitions) != 1 || metrics.transitions[0] != "cancel:idempotent" {
+			t.Fatalf("expected metric cancel:idempotent, got %v", metrics.transitions)
+		}
+	})
+
+	t.Run("unit_crash_recovery_mock", func(t *testing.T) {
+		const orderID int64 = 88002
+		const userID int64 = 1
+
+		connector := &mockCancelCrashConnector{
+			orderID: orderID,
+			userID:  userID,
+		}
+		sqlDB := sql.OpenDB(connector)
+		defer sqlDB.Close()
+
+		mockDB, err := gorm.Open(gormmysql.New(gormmysql.Config{
+			Conn:                      sqlDB,
+			SkipInitializeWithVersion: true,
+		}), &gorm.Config{
+			Logger: logger.Discard,
+		})
+		if err != nil {
+			t.Fatalf("failed to open mock gorm db: %v", err)
+		}
+
+		guard := &fakeInventoryPreDeductor{applied: true}
+		metrics := &fakeOrderMetrics{}
+		orderSvc := service.NewOrderServiceWithTimeoutInventoryPreDeductorAndMetrics(mockDB, 30*time.Minute, guard, metrics)
+
+		err = orderSvc.CancelOrder(context.Background(), userID, orderID)
+		if err != nil {
+			t.Fatalf("expected nil error on idempotent cancel, got %v", err)
+		}
+		if len(guard.restores) != 1 || guard.restores[0] != orderID {
+			t.Fatalf("expected 1 redis restore for order %d, got %v", orderID, guard.restores)
+		}
+		if len(metrics.transitions) != 1 || metrics.transitions[0] != "cancel:idempotent" {
+			t.Fatalf("expected metric cancel:idempotent, got %v", metrics.transitions)
+		}
+	})
 }
