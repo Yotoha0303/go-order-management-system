@@ -2,7 +2,10 @@ package service_test
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"io"
 	"os"
 	"sync"
 	"testing"
@@ -12,6 +15,7 @@ import (
 	"go-order-management-system/internal/request"
 	"go-order-management-system/internal/service"
 
+	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -1656,21 +1660,41 @@ func TestCreateOrder_ConcurrentSameIdempotencyKey_CreatesOneOrder(t *testing.T) 
 	wg.Wait()
 	close(results)
 
-	var orderID int64
-	for result := range results {
-		if result.err != nil {
-			t.Fatalf("concurrent idempotent create failed: %v", result.err)
+	var (
+		orderID         int64
+		successCount    int
+		inProgressCount int
+	)
+	for res := range results {
+		if res.err != nil {
+			if errors.Is(res.err, service.ErrOrderBeingCreated) {
+				inProgressCount++
+				if res.order != nil {
+					t.Fatalf("expected nil order when ErrOrderBeingCreated, got %+v", res.order)
+				}
+				continue
+			}
+			t.Fatalf("unexpected error during concurrent idempotent create: %v", res.err)
 		}
-		if result.order == nil {
-			t.Fatal("concurrent idempotent create returned nil order")
+
+		if res.order == nil {
+			t.Fatal("concurrent idempotent create returned nil order without error")
 		}
+		successCount++
 		if orderID == 0 {
-			orderID = result.order.ID
+			orderID = res.order.ID
 			continue
 		}
-		if result.order.ID != orderID {
-			t.Fatalf("expected order ID %d, got %d", orderID, result.order.ID)
+		if res.order.ID != orderID {
+			t.Fatalf("expected order ID %d, got %d", orderID, res.order.ID)
 		}
+	}
+
+	if successCount == 0 {
+		t.Fatal("expected at least one request to succeed in creating the order, got 0")
+	}
+	if successCount+inProgressCount != requests {
+		t.Fatalf("expected sum of success (%d) and in-progress (%d) to equal total requests (%d)", successCount, inProgressCount, requests)
 	}
 
 	var orderCount int64
@@ -1753,5 +1777,137 @@ func TestCreateOrder_EmptyIdempotencyKey_ReturnsError(t *testing.T) {
 
 	if !errors.Is(err, service.ErrInvalidIdempotencyKey) {
 		t.Fatalf("expected ErrInvalidIdempotencyKey, got %v", err)
+	}
+}
+
+type mockRRConnector struct{}
+
+func (c *mockRRConnector) Connect(context.Context) (driver.Conn, error) {
+	return &mockRRConn{}, nil
+}
+
+func (c *mockRRConnector) Driver() driver.Driver {
+	return &mockRRDriver{}
+}
+
+type mockRRDriver struct{}
+
+func (d *mockRRDriver) Open(name string) (driver.Conn, error) {
+	return &mockRRConn{}, nil
+}
+
+type mockRRConn struct{}
+
+func (c *mockRRConn) Prepare(query string) (driver.Stmt, error) {
+	return &mockRRStmt{}, nil
+}
+
+func (c *mockRRConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	return &mockRRStmt{}, nil
+}
+
+func (c *mockRRConn) Close() error {
+	return nil
+}
+
+func (c *mockRRConn) Begin() (driver.Tx, error) {
+	return &mockRRTx{}, nil
+}
+
+func (c *mockRRConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	return &mockRRTx{}, nil
+}
+
+func (c *mockRRConn) Ping(ctx context.Context) error {
+	return nil
+}
+
+func (c *mockRRConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	return driver.RowsAffected(0), nil
+}
+
+func (c *mockRRConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	return &mockRRRows{}, nil
+}
+
+type mockRRTx struct{}
+
+func (t *mockRRTx) Commit() error   { return nil }
+func (t *mockRRTx) Rollback() error { return nil }
+
+type mockRRStmt struct{}
+
+func (s *mockRRStmt) Close() error  { return nil }
+func (s *mockRRStmt) NumInput() int { return -1 }
+
+func (s *mockRRStmt) Exec(args []driver.Value) (driver.Result, error) {
+	return driver.RowsAffected(0), nil
+}
+
+func (s *mockRRStmt) Query(args []driver.Value) (driver.Rows, error) {
+	return &mockRRRows{}, nil
+}
+
+type mockRRRows struct{}
+
+func (r *mockRRRows) Columns() []string {
+	return []string{"id", "user_id", "idempotency_key", "request_hash", "status", "order_id", "created_at", "updated_at"}
+}
+
+func (r *mockRRRows) Close() error { return nil }
+
+func (r *mockRRRows) Next(dest []driver.Value) error {
+	return io.EOF
+}
+
+func TestCreateOrder_IdempotencyKeyRecordNotFoundInRR_ReturnsOrderBeingCreatedAndReleasesPreDeduct(t *testing.T) {
+	sqlDB := sql.OpenDB(&mockRRConnector{})
+	defer sqlDB.Close()
+
+	mockDB, err := gorm.Open(gormmysql.New(gormmysql.Config{
+		Conn:                      sqlDB,
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{
+		Logger: logger.Discard,
+	})
+	if err != nil {
+		t.Fatalf("failed to open mock gorm db: %v", err)
+	}
+
+	guard := &fakeInventoryPreDeductor{applied: true}
+	metrics := &fakeOrderMetrics{}
+	orderSvc := service.NewOrderServiceWithTimeoutInventoryPreDeductorAndMetrics(mockDB, 30*time.Minute, guard, metrics)
+
+	req := request.CreateOrderRequest{
+		IdempotencyKey: newIdempotencyKey(),
+		Items: []request.CreateOrderItemRequest{
+			{ProductID: 1001, Quantity: 2},
+		},
+	}
+
+	order, err := orderSvc.CreateOrder(context.Background(), testUserID, req)
+
+	// 1. 验证必须稳定返回 ErrOrderBeingCreated，绝对不能返回 gorm.ErrRecordNotFound 或其它底层内部错误
+	if !errors.Is(err, service.ErrOrderBeingCreated) {
+		t.Fatalf("expected ErrOrderBeingCreated under MySQL RR snapshot read race, got %v", err)
+	}
+	if order != nil {
+		t.Fatalf("expected nil order on ErrOrderBeingCreated, got %+v", order)
+	}
+
+	// 2. 验证 Redis 预扣凭证已被准确释放，绝对不发生库存泄漏
+	if len(guard.preDeducts) != 1 {
+		t.Fatalf("expected 1 pre-deduct call, got %d", len(guard.preDeducts))
+	}
+	if len(guard.releases) != 1 {
+		t.Fatalf("expected 1 pre-deduct release call, got %d", len(guard.releases))
+	}
+	if guard.releases[0] != guard.preDeducts[0] {
+		t.Fatalf("expected release orderID %d, got %d", guard.preDeducts[0], guard.releases[0])
+	}
+
+	// 3. 验证业务指标被精确记录为 idempotency_in_progress
+	if len(metrics.orderCreates) != 1 || metrics.orderCreates[0] != "idempotency_in_progress" {
+		t.Fatalf("expected metrics to record 'idempotency_in_progress', got %v", metrics.orderCreates)
 	}
 }

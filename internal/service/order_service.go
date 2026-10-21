@@ -77,6 +77,10 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 		if !acquired {
 			record, err := dao.GetOrderIdempotencyKey(tx, ctx, userID, req.IdempotencyKey)
 			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					// 在 MySQL RR 隔离级别下，并发先到达的事务已插入记录但尚未提交，后到达的事务快照读不到，必须作为“创建中”处理
+					return ErrOrderBeingCreated
+				}
 				return err
 			}
 			if record.RequestHash != requestHash {
