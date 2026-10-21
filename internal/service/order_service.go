@@ -13,6 +13,7 @@ import (
 	"go-order-management-system/internal/dao"
 	"go-order-management-system/internal/model"
 	"go-order-management-system/internal/request"
+	"go-order-management-system/pkg/idgen"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -25,11 +26,15 @@ const (
 )
 
 func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req request.CreateOrderRequest) (*model.Order, error) {
+	// 1. 参数防御与商品重复校验（validateDuplicateItems）前置到最外层
 	if userID <= 0 {
 		return nil, ErrInvalidUserID
 	}
 	if strings.TrimSpace(req.IdempotencyKey) == "" || len(req.IdempotencyKey) > 128 {
 		return nil, ErrInvalidIdempotencyKey
+	}
+	if err := validateDuplicateItems(req.Items); err != nil {
+		return nil, err
 	}
 
 	requestHash, err := buildCreateOrderRequestHash(req)
@@ -37,9 +42,33 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 		return nil, err
 	}
 
-	var createOrder *model.Order
-	var preDeductedOrderID int64
+	items := sortedOrderItems(req.Items)
+
+	// 2. 预扣防线前置：通过 idgen.NextID() 预生成 orderID，并在开启 MySQL 事务之前调用 p.preDeductInventory
+	//    注意：绝对不在预扣前对 MySQL 发起任何查询！让 Redis 真正成为拦截 99.9% 售罄流量的第一道护城河
+	orderID := idgen.NextID()
+	applied, insufficient := p.preDeductInventory(ctx, orderID, items)
+
+	// 3. 极速拦截：若 Redis 预扣返回 insufficient，直接返回 ErrInsufficientStock，绝对不触碰 MySQL，零 DB 事务与零连接消耗
+	if insufficient {
+		p.recordOrderCreate("insufficient_stock")
+		return nil, ErrInsufficientStock
+	}
+
+	// 4. 极简事务：进入 p.db.Transaction(...)，内部绝对不包含任何外部网络 IO；
+	//    model.Order 直接使用预生成的 orderID；计算好 TotalAmountFen 后一次性创建订单（消除多余的 PatchOrderTotalPriceFen 更新）；
+	//    完成条件扣减、明细写入、流水写入、Outbox 写入与幂等标记
+	var createdOrder *model.Order
 	idempotentReplay := false
+
+	if p.db == nil {
+		if applied {
+			p.releasePreDeductedInventory(context.WithoutCancel(ctx), orderID)
+		}
+		p.recordOrderCreate("error")
+		return nil, errors.New("database connection is nil")
+	}
+
 	err = p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		acquired, err := dao.TryCreateOrderIdempotencyKey(tx, ctx, userID, req.IdempotencyKey, requestHash)
 		if err != nil {
@@ -59,12 +88,12 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 				if record.OrderID == nil || *record.OrderID <= 0 {
 					return ErrOrderIdempotencyStateInvalid
 				}
-
-				createOrder, err = dao.GetOrderByID(ctx, tx, userID, *record.OrderID)
+				replayOrder, err := dao.GetOrderByID(ctx, tx, userID, *record.OrderID)
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return ErrOrderIdempotencyStateInvalid
 				}
 				if err == nil {
+					createdOrder = replayOrder
 					idempotentReplay = true
 				}
 				return err
@@ -75,23 +104,6 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 			}
 		}
 
-		var totalAmountFen int64
-		order := &model.Order{
-			UserID:         userID,
-			OrderNo:        generateOrderNo(),
-			TotalAmountFen: 0,
-			Status:         model.OrderStatusPending,
-			CreatedAt:      time.Now(),
-		}
-		if err := dao.CreateOrder(ctx, tx, order); err != nil {
-			return err
-		}
-
-		if err := validateDuplicateItems(req.Items); err != nil {
-			return err
-		}
-
-		items := sortedOrderItems(req.Items)
 		products := make(map[int64]*model.Product, len(items))
 		for _, itemReq := range items {
 			product, err := dao.GetProductByID(ctx, tx, itemReq.ProductID)
@@ -107,12 +119,24 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 			products[itemReq.ProductID] = product
 		}
 
-		applied, insufficient := p.preDeductInventory(ctx, order.ID, items)
-		if insufficient {
-			return ErrInsufficientStock
+		var totalAmountFen int64
+		for _, itemReq := range items {
+			product := products[itemReq.ProductID]
+			totalAmountFen += product.PriceFen * itemReq.Quantity
 		}
-		if applied {
-			preDeductedOrderID = order.ID
+
+		now := time.Now()
+		order := &model.Order{
+			ID:             orderID,
+			UserID:         userID,
+			OrderNo:        generateOrderNo(),
+			TotalAmountFen: totalAmountFen,
+			Status:         model.OrderStatusPending,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}
+		if err := dao.CreateOrder(ctx, tx, order); err != nil {
+			return err
 		}
 
 		for _, itemReq := range items {
@@ -140,8 +164,6 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 			}
 
 			subtotalFen := product.PriceFen * itemReq.Quantity
-			totalAmountFen += subtotalFen
-
 			orderItem := &model.OrderItem{
 				OrderID:         order.ID,
 				ProductID:       product.ID,
@@ -168,10 +190,6 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 			}
 		}
 
-		if err := dao.PatchOrderTotalPriceFen(ctx, tx, order.ID, totalAmountFen, userID); err != nil {
-			return err
-		}
-
 		rowsAffected, err := dao.CompleteOrderIdempotencyKey(tx, ctx, userID, req.IdempotencyKey, order.ID)
 		if err != nil || rowsAffected != 1 {
 			return ErrOrderIdempotencyStateInvalid
@@ -188,24 +206,28 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 			return err
 		}
 
-		order.TotalAmountFen = totalAmountFen
-		createOrder = order
+		createdOrder = order
 		return nil
 	})
+
+	// 5. 补偿闭环：若 MySQL 事务提交失败或异常，在事务外调用 p.releasePreDeductedInventory(context.WithoutCancel(ctx), orderID) 释放预扣凭证
 	if err != nil {
-		if preDeductedOrderID > 0 {
-			p.releasePreDeductedInventory(context.WithoutCancel(ctx), preDeductedOrderID)
+		if applied {
+			p.releasePreDeductedInventory(context.WithoutCancel(ctx), orderID)
 		}
 		p.recordOrderCreate(classifyOrderCreateError(err))
 		return nil, err
 	}
 
 	if idempotentReplay {
+		if applied {
+			p.releasePreDeductedInventory(context.WithoutCancel(ctx), orderID)
+		}
 		p.recordOrderCreate("idempotent_replay")
 	} else {
 		p.recordOrderCreate("success")
 	}
-	return createOrder, nil
+	return createdOrder, nil
 }
 
 func validateDuplicateItems(items []request.CreateOrderItemRequest) error {
@@ -611,5 +633,4 @@ func (p *OrderService) FinishOrder(ctx context.Context, userID, orderID int64) e
 	}
 	p.recordOrderTransition("finish", "success")
 	return nil
-
 }

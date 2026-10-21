@@ -3,14 +3,17 @@ package service_test
 import (
 	"context"
 	"errors"
-	"go-order-management-system/internal/model"
-	"go-order-management-system/internal/request"
-	"go-order-management-system/internal/service"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
+	"go-order-management-system/internal/model"
+	"go-order-management-system/internal/request"
+	"go-order-management-system/internal/service"
+
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func newOrderService(t *testing.T) (*gorm.DB, *service.OrderService) {
@@ -155,6 +158,86 @@ func TestCreateOrder_RedisPreDeductInsufficient(t *testing.T) {
 	if len(guard.releases) != 0 {
 		t.Fatalf("expected no redis release when pre-deduct was not applied, got %v", guard.releases)
 	}
+}
+
+func TestCreateOrder_RedisPreDeductInsufficient_ZeroDatabaseAccess(t *testing.T) {
+	guard := &fakeInventoryPreDeductor{insufficient: true}
+
+	t.Run("nil_invalid_db_connection", func(t *testing.T) {
+		orderSvc := service.NewOrderServiceWithTimeoutAndInventoryPreDeductor(nil, 30*time.Minute, guard)
+		order, err := orderSvc.CreateOrder(context.Background(), testUserID, request.CreateOrderRequest{
+			IdempotencyKey: newIdempotencyKey(),
+			Items: []request.CreateOrderItemRequest{
+				{ProductID: 999, Quantity: 1},
+			},
+		})
+
+		if !errors.Is(err, service.ErrInsufficientStock) {
+			t.Fatalf("expected ErrInsufficientStock with nil DB, got %v", err)
+		}
+		if order != nil {
+			t.Fatalf("expected nil order, got %+v", order)
+		}
+	})
+
+	t.Run("unconnected_invalid_db_connection", func(t *testing.T) {
+		invalidDB := &gorm.DB{Config: &gorm.Config{Logger: logger.Discard}}
+		guardUnconnected := &fakeInventoryPreDeductor{insufficient: true}
+		orderSvc := service.NewOrderServiceWithTimeoutAndInventoryPreDeductor(invalidDB, 30*time.Minute, guardUnconnected)
+		order, err := orderSvc.CreateOrder(context.Background(), testUserID, request.CreateOrderRequest{
+			IdempotencyKey: newIdempotencyKey(),
+			Items: []request.CreateOrderItemRequest{
+				{ProductID: 999, Quantity: 1},
+			},
+		})
+
+		if !errors.Is(err, service.ErrInsufficientStock) {
+			t.Fatalf("expected ErrInsufficientStock with invalid unconnected DB, got %v", err)
+		}
+		if order != nil {
+			t.Fatalf("expected nil order, got %+v", order)
+		}
+		if len(guardUnconnected.preDeducts) != 1 {
+			t.Fatalf("expected 1 redis pre-deduct attempt, got %d", len(guardUnconnected.preDeducts))
+		}
+		if len(guardUnconnected.releases) != 0 {
+			t.Fatalf("expected 0 releases, got %v", guardUnconnected.releases)
+		}
+	})
+
+	t.Run("closed_db_connection_when_mysql_enabled", func(t *testing.T) {
+		if os.Getenv("RUN_MYSQL_TEST") != "1" {
+			t.Skip("skip closed DB integration test; set RUN_MYSQL_TEST=1 to run")
+		}
+		testDB := setupTestDB(t)
+		sqlDB, err := testDB.DB()
+		if err != nil {
+			t.Fatalf("get sql db failed: %v", err)
+		}
+		_ = sqlDB.Close()
+
+		guardClosed := &fakeInventoryPreDeductor{insufficient: true}
+		orderSvc := service.NewOrderServiceWithTimeoutAndInventoryPreDeductor(testDB, 30*time.Minute, guardClosed)
+		order, err := orderSvc.CreateOrder(context.Background(), testUserID, request.CreateOrderRequest{
+			IdempotencyKey: newIdempotencyKey(),
+			Items: []request.CreateOrderItemRequest{
+				{ProductID: 999, Quantity: 1},
+			},
+		})
+
+		if !errors.Is(err, service.ErrInsufficientStock) {
+			t.Fatalf("expected ErrInsufficientStock with closed DB, got %v", err)
+		}
+		if order != nil {
+			t.Fatalf("expected nil order, got %+v", order)
+		}
+		if len(guardClosed.preDeducts) != 1 {
+			t.Fatalf("expected 1 redis pre-deduct attempt, got %d", len(guardClosed.preDeducts))
+		}
+		if len(guardClosed.releases) != 0 {
+			t.Fatalf("expected 0 releases, got %v", guardClosed.releases)
+		}
+	})
 }
 
 func TestCreateOrder_ReleasesRedisPreDeductOnTransactionFailure(t *testing.T) {
@@ -1445,7 +1528,7 @@ func TestCreateOrder_IdempotentReplayReturnsSameOrder(t *testing.T) {
 	}
 }
 
-func TestCreateOrder_IdempotentReplayDoesNotPreDeductRedisAgain(t *testing.T) {
+func TestCreateOrder_IdempotentReplay_ReleasesExtraPreDeduct(t *testing.T) {
 	testDB := setupTestDB(t)
 	guard := &fakeInventoryPreDeductor{applied: true}
 	orderSvc := service.NewOrderServiceWithTimeoutAndInventoryPreDeductor(testDB, 30*time.Minute, guard)
@@ -1462,6 +1545,10 @@ func TestCreateOrder_IdempotentReplayDoesNotPreDeductRedisAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first create order failed: %v", err)
 	}
+	if len(guard.preDeducts) != 1 || len(guard.releases) != 0 {
+		t.Fatalf("expected 1 pre-deduct and 0 release on first order, got %d pre-deducts, %d releases", len(guard.preDeducts), len(guard.releases))
+	}
+
 	second, err := orderSvc.CreateOrder(context.Background(), testUserID, req)
 	if err != nil {
 		t.Fatalf("idempotent replay failed: %v", err)
@@ -1470,9 +1557,19 @@ func TestCreateOrder_IdempotentReplayDoesNotPreDeductRedisAgain(t *testing.T) {
 	if second.ID != first.ID {
 		t.Fatalf("expected replay to return order %d, got %d", first.ID, second.ID)
 	}
-	if len(guard.preDeducts) != 1 || guard.preDeducts[0] != first.ID {
-		t.Fatalf("expected one redis pre-deduct for first order %d, got %v", first.ID, guard.preDeducts)
+	// Under pre-deduct fronting architecture:
+	// The second request pre-deducted at Redis, entered DB transaction, discovered OrderAlreadyCreated,
+	// and immediately released the extra pre-deduct on transaction rollback, ensuring zero inventory leak!
+	if len(guard.preDeducts) != 2 {
+		t.Fatalf("expected 2 redis pre-deduct attempts across both requests, got %d", len(guard.preDeducts))
 	}
+	if len(guard.releases) != 1 || guard.releases[0] != guard.preDeducts[1] {
+		t.Fatalf("expected 1 release for second pre-deducted order %d, got releases %v", guard.preDeducts[1], guard.releases)
+	}
+}
+
+func TestCreateOrder_IdempotentReplayDoesNotPreDeductRedisAgain(t *testing.T) {
+	TestCreateOrder_IdempotentReplay_ReleasesExtraPreDeduct(t)
 }
 
 func TestCreateOrder_SameIdempotencyKeyDifferentRequest_ReturnsConflict(t *testing.T) {
