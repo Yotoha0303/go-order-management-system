@@ -16,6 +16,11 @@
 | **GAP-004** | P2 | 队列拓扑 | RabbitMQ 单消息 TTL 存在队头阻塞（Head-of-Line Blocking）隐患 | [#5](https://github.com/Yotoha0303/go-order-management-system/issues/5) | OPEN | `sre-operator` / `system-architect` |
 | **GAP-005** | P1 | 最终一致性 | 订单超时取消在异常重启或网络故障时导致 Redis 库存永久丢失回补 | [#6](https://github.com/Yotoha0303/go-order-management-system/issues/6) | OPEN | `backend-dev` / `qa-validator` |
 | **GAP-006** | P2 | 数据模型 | 库存模型缺少锁定库存（`locked_quantity`）设计，且定时对账 Worker 缺乏自愈机制 | [#7](https://github.com/Yotoha0303/go-order-management-system/issues/7) | OPEN | `data-engineer` / `backend-dev` |
+| **GAP-007** | **P0** | 库存并发 | `AddInventory` 补货使用绝对值覆盖写入 Redis，并发入库存在库存回退竞态 Bug | [#8](https://github.com/Yotoha0303/go-order-management-system/issues/8) | OPEN | `backend-dev` / `data-engineer` |
+| **GAP-008** | P1 | 队列拓扑 | RabbitMQ 死信失败队列 `order.timeout.failed` 缺乏消费者与告警，形成消息堆积黑洞 | [#9](https://github.com/Yotoha0303/go-order-management-system/issues/9) | OPEN | `sre-operator` / `backend-dev` |
+| **GAP-009** | P2 | 业务权限 | 缺少管理员全局订单列表与审计视图，管理后台无法查询与干预全平台订单 | [#10](https://github.com/Yotoha0303/go-order-management-system/issues/10) | OPEN | `backend-dev` / `sec-auditor` |
+| **GAP-010** | P2 | 缓存安全 | 商品详情缓存查询缺乏防穿透（空值缓存/布隆）设计，非法 ID 可打爆底层 MySQL | [#11](https://github.com/Yotoha0303/go-order-management-system/issues/11) | OPEN | `backend-dev` / `sec-auditor` |
+| **GAP-011** | P1 | 测试架构 | 修复测试套件中并发幂等的错误断言，消除 `t.Skip` 导致的本地开发虚假全绿 | [#12](https://github.com/Yotoha0303/go-order-management-system/issues/12) | OPEN | `qa-validator` / `backend-dev` |
 
 ---
 
@@ -64,3 +69,38 @@
   1. 数据表增加 `locked_quantity` 字段并设计状态迁移；
   2. 取消订单回补库存显式按 `product_id ASC` 加锁；
   3. 对账 Worker 增加可配置的自动修正或告警推送。
+
+### GAP-007 · 并发补货绝对值覆盖写导致库存回退修复
+- **现状**：`AddInventory` 在 DB 成功后调用 `g.redisClient.Set(key, afterQuantity, 0)` 绝对值覆盖。
+- **风险**：并发入库时先计算的旧值在网络延迟后覆盖新值，导致补货库存凭空蒸发。
+- **DoD**：
+  1. 改为 Redis `INCRBY` 原子递增指令；
+  2. 编写多 Goroutine 并发补货测试，验证最终 Redis 库存与 MySQL 严格一致。
+
+### GAP-008 · RabbitMQ 死信失败队列治理
+- **现状**：`order.timeout.failed` 队列声明后没有任何消费者监听或告警通道。
+- **风险**：异常与坏消息永久堆积成黑洞。
+- **DoD**：
+  1. 编写对 `failedQueue` 的消费或告警监控逻辑；
+  2. 支持结合重试次数将消息转为人工排障记录。
+
+### GAP-009 · 管理员全局订单列表与审计视图补齐
+- **现状**：`/api/v1/orders` 强绑定 `current_user_id`，管理员无法查看全平台订单。
+- **风险**：管理后台订单履约、排障与审计功能不可用。
+- **DoD**：
+  1. 新增 `/api/v1/admin/orders` 路由及分页筛选 Handler；
+  2. 接入 `operation_logs` 审计记录。
+
+### GAP-010 · 商品详情缓存防穿透加固
+- **现状**：查询非法/不存在的 `product_id` 时，Redis 返回 Nil 后穿透查 DB，未写空值缓存。
+- **风险**：恶意轮询可打爆 MySQL。
+- **DoD**：
+  1. 引入空对象缓存（Null Object）机制，设置短 TTL（如 30s~60s）并加随机抖动；
+  2. 编写穿透验证测试，证明同非法 ID 后续请求直接命中 Redis 空值。
+
+### GAP-011 · 纠正并发幂等测试断言与虚假全绿
+- **现状**：`RUN_MYSQL_TEST` 缺省时静默跳过核心测试；并发幂等测试断言错误假设所有请求成功返回 nil。
+- **风险**：测试误报全绿；并发状态机逻辑断裂未被暴露。
+- **DoD**：
+  1. 纠正测试断言：并发同 Key 必须且仅有 1 个成功创建，其余请求断言返回 `ErrOrderBeingCreated`；
+  2. 完善集成测试启动指引与轻量单元测试分层。
