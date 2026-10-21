@@ -13,7 +13,7 @@
 | **GAP-001** | P1 | 订单/库存 | Redis Lua 原子预扣位于 MySQL 事务内部，未能前置拦截热点且引发长事务与双重扣减 | [#2](https://github.com/Yotoha0303/go-order-management-system/issues/2) | CLOSED | `backend-dev` / `system-architect` |
 | **GAP-002** | P1 | 订单/幂等 | 订单幂等校验在 MySQL RR 隔离级别下的并发同 Key 查询异常与失败回滚状态丢失 | [#3](https://github.com/Yotoha0303/go-order-management-system/issues/3) | CLOSED | `backend-dev` / `data-engineer` |
 | **GAP-003** | P2 | 延迟投递 | Transactional Outbox 轮询缺乏并发锁，多实例部署下消息重复发布 | [#4](https://github.com/Yotoha0303/go-order-management-system/issues/4) | CLOSED | `sre-operator` / `backend-dev` |
-| **GAP-004** | P2 | 队列拓扑 | RabbitMQ 单消息 TTL 存在队头阻塞（Head-of-Line Blocking）隐患 | [#5](https://github.com/Yotoha0303/go-order-management-system/issues/5) | OPEN | `sre-operator` / `system-architect` |
+| **GAP-004** | P2 | 队列拓扑 | RabbitMQ 单消息 TTL 存在队头阻塞（Head-of-Line Blocking）隐患 | [#5](https://github.com/Yotoha0303/go-order-management-system/issues/5) | CLOSED | `sre-operator` / `system-architect` |
 | **GAP-005** | P1 | 最终一致性 | 订单超时取消在异常重启或网络故障时导致 Redis 库存永久丢失回补 | [#6](https://github.com/Yotoha0303/go-order-management-system/issues/6) | CLOSED | `backend-dev` / `qa-validator` |
 | **GAP-006** | P2 | 数据模型 | 库存模型缺少锁定库存（`locked_quantity`）设计，且定时对账 Worker 缺乏自愈机制 | [#7](https://github.com/Yotoha0303/go-order-management-system/issues/7) | OPEN | `data-engineer` / `backend-dev` |
 | **GAP-007** | **P0** | 库存并发 | `AddInventory` 补货使用绝对值覆盖写入 Redis，并发入库存在库存回退竞态 Bug | [#8](https://github.com/Yotoha0303/go-order-management-system/issues/8) | CLOSED | `backend-dev` / `data-engineer` |
@@ -64,6 +64,8 @@
 - **DoD**：
   1. 引入延迟消息插件（`rabbitmq-delayed-message-exchange`）或固定延迟阶梯队列设计；
   2. 验证多批次交错超时的消息能否准时进入死信取消链路。
+- **闭环方案**：落盘 ADR-002 架构决策并选定 Option B（分级固定 TTL 阶梯延时队列），彻底摒弃第三方非标插件依赖；在 `internal/ordertimeout/worker.go` 中声明 `order.timeout.delay.5m` / `15m` / `30m` 独立物理阶梯队列，由 `buildLadderQueueArguments` 统一绑定队列级 `x-message-ttl` 与死信 DLX，并在 `buildOrderTimeoutPublishing` 中实现向上安全匹配阶梯路由与单消息 `Expiration` 严格剥离；彻底消灭由于不同 TTL 混用引发的队头阻塞（Head-of-Line Blocking）。全流程经 qa-validator 审查、falsifier 4 维变异攻击（彻底根除 Expiration 剥离虚假全绿与自编自导测试死穴）与 gate-auditor 门禁放行。见 `docs/changes/007-fix-gap-004-ladder-delay-queue.md`。
+- **状态**：CLOSED (2026-10-21)
 
 ### GAP-005 · 订单超时取消最终一致性加固
 - **现状**：`CancelExpiredOrder` 在 MySQL 事务提交后调用 `restorePreDeductedInventory`。若此时服务崩溃，重试消费时因订单状态为 Cancelled 导致直接退出，Redis 库存永远少加。

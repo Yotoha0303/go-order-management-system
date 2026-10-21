@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -32,8 +33,35 @@ const (
 	defaultMaxCancelRetries  = 3
 )
 
+// DelayLadder 定义分级固定延时阶梯队列模型
+type DelayLadder struct {
+	Duration   time.Duration `json:"duration"`
+	RoutingKey string        `json:"routing_key"`
+	QueueName  string        `json:"queue_name"`
+}
+
+// defaultProductionLadders 生产环境默认 3 级阶梯（5m 极速秒杀单，15m 大促标准单，30m 常规单）
+var defaultProductionLadders = []DelayLadder{
+	{
+		Duration:   5 * time.Minute,
+		RoutingKey: "delay.5m",
+		QueueName:  "order.timeout.delay.5m",
+	},
+	{
+		Duration:   15 * time.Minute,
+		RoutingKey: "delay.15m",
+		QueueName:  "order.timeout.delay.15m",
+	},
+	{
+		Duration:   30 * time.Minute,
+		RoutingKey: "delay.30m",
+		QueueName:  "order.timeout.delay.30m",
+	},
+}
+
 type topology struct {
 	exchange         string
+	ladders          []DelayLadder
 	delayQueue       string
 	cancelQueue      string
 	failedQueue      string
@@ -44,6 +72,7 @@ type topology struct {
 
 var productionTopology = topology{
 	exchange:         exchangeName,
+	ladders:          defaultProductionLadders,
 	delayQueue:       delayQueueName,
 	cancelQueue:      cancelQueueName,
 	failedQueue:      failedQueueName,
@@ -68,6 +97,7 @@ type Config struct {
 	OutboxRetryDelay   time.Duration
 	PublishBatchSize   int
 	ConsumerPrefetch   int
+	DelayLadders       []DelayLadder
 }
 
 type Worker struct {
@@ -98,13 +128,24 @@ func NewWorker(config Config, db *gorm.DB, canceller ExpiredOrderCanceller, logg
 	if logger == nil {
 		return nil, errors.New("create order timeout worker: logger is required")
 	}
+
+	top := productionTopology
+	if len(config.DelayLadders) > 0 {
+		ladders := make([]DelayLadder, len(config.DelayLadders))
+		copy(ladders, config.DelayLadders)
+		sort.Slice(ladders, func(i, j int) bool {
+			return ladders[i].Duration < ladders[j].Duration
+		})
+		top.ladders = ladders
+	}
+
 	return &Worker{
 		config:    config,
 		db:        db,
 		canceller: canceller,
 		logger:    logger,
 		now:       time.Now,
-		topology:  productionTopology,
+		topology:  top,
 	}, nil
 }
 
@@ -191,6 +232,18 @@ func (w *Worker) runSession(ctx context.Context) error {
 	}
 }
 
+func buildLadderQueueArguments(ladder DelayLadder, topology topology) amqp.Table {
+	ttlMs := ladder.Duration.Milliseconds()
+	if ttlMs < 1 {
+		ttlMs = 1
+	}
+	return amqp.Table{
+		"x-dead-letter-exchange":    topology.exchange,
+		"x-dead-letter-routing-key": topology.cancelRoutingKey,
+		"x-message-ttl":             ttlMs,
+	}
+}
+
 func declareTopology(connection *amqp.Connection, topology topology) error {
 	channel, err := connection.Channel()
 	if err != nil {
@@ -201,15 +254,30 @@ func declareTopology(connection *amqp.Connection, topology topology) error {
 	if err := channel.ExchangeDeclare(topology.exchange, "direct", true, false, false, false, nil); err != nil {
 		return fmt.Errorf("declare order timeout exchange: %w", err)
 	}
-	if _, err := channel.QueueDeclare(topology.delayQueue, true, false, false, false, amqp.Table{
-		"x-dead-letter-exchange":    topology.exchange,
-		"x-dead-letter-routing-key": topology.cancelRoutingKey,
-	}); err != nil {
-		return fmt.Errorf("declare order timeout delay queue: %w", err)
+
+	// 声明分级阶梯队列，统一配置队列级 x-message-ttl 与死信 DLX 属性
+	if len(topology.ladders) > 0 {
+		for _, ladder := range topology.ladders {
+			args := buildLadderQueueArguments(ladder, topology)
+			if _, err := channel.QueueDeclare(ladder.QueueName, true, false, false, false, args); err != nil {
+				return fmt.Errorf("declare order timeout ladder queue %s: %w", ladder.QueueName, err)
+			}
+			if err := channel.QueueBind(ladder.QueueName, ladder.RoutingKey, topology.exchange, false, nil); err != nil {
+				return fmt.Errorf("bind order timeout ladder queue %s: %w", ladder.QueueName, err)
+			}
+		}
+	} else if topology.delayQueue != "" {
+		if _, err := channel.QueueDeclare(topology.delayQueue, true, false, false, false, amqp.Table{
+			"x-dead-letter-exchange":    topology.exchange,
+			"x-dead-letter-routing-key": topology.cancelRoutingKey,
+		}); err != nil {
+			return fmt.Errorf("declare order timeout delay queue: %w", err)
+		}
+		if err := channel.QueueBind(topology.delayQueue, topology.delayRoutingKey, topology.exchange, false, nil); err != nil {
+			return fmt.Errorf("bind order timeout delay queue: %w", err)
+		}
 	}
-	if err := channel.QueueBind(topology.delayQueue, topology.delayRoutingKey, topology.exchange, false, nil); err != nil {
-		return fmt.Errorf("bind order timeout delay queue: %w", err)
-	}
+
 	if _, err := channel.QueueDeclare(topology.cancelQueue, true, false, false, false, amqp.Table{
 		"x-dead-letter-exchange":    topology.exchange,
 		"x-dead-letter-routing-key": topology.failedRoutingKey,
@@ -284,6 +352,29 @@ func calculateExponentialBackoff(baseDelay time.Duration, attempts int, maxDelay
 	return delay
 }
 
+func (w *Worker) matchDelayLadder(delay time.Duration) DelayLadder {
+	return matchDelayLadder(w.topology.ladders, delay)
+}
+
+func matchDelayLadder(ladders []DelayLadder, delay time.Duration) DelayLadder {
+	if len(ladders) == 0 {
+		return DelayLadder{
+			Duration:   30 * time.Minute,
+			RoutingKey: "delay.30m",
+			QueueName:  "order.timeout.delay.30m",
+		}
+	}
+	if delay <= ladders[0].Duration {
+		return ladders[0]
+	}
+	for i := 1; i < len(ladders); i++ {
+		if delay <= ladders[i].Duration {
+			return ladders[i]
+		}
+	}
+	return ladders[len(ladders)-1]
+}
+
 func (w *Worker) publishBatch(ctx context.Context, channel *amqp.Channel) error {
 	leaseDuration := w.config.OutboxRetryDelay
 	if leaseDuration <= 0 {
@@ -334,6 +425,41 @@ func (w *Worker) publishBatch(ctx context.Context, channel *amqp.Channel) error 
 	return nil
 }
 
+func buildOrderTimeoutPublishing(now time.Time, event Event, top topology) (amqp.Publishing, string, error) {
+	body, err := encodeEvent(event)
+	if err != nil {
+		return amqp.Publishing{}, "", fmt.Errorf("encode order timeout event: %w", err)
+	}
+
+	delay := event.TimeoutAt.Sub(now)
+	var routingKey string
+	publishing := amqp.Publishing{
+		DeliveryMode: amqp.Persistent,
+		ContentType:  "application/json",
+		MessageId:    event.EventID,
+		Timestamp:    now,
+		Body:         body,
+	}
+
+	// 仅在无阶梯的旧版单队列模式下保留单消息 Expiration；
+	// 阶梯延时队列架构下彻底废弃 Expiration 属性，根除队头阻塞
+	if len(top.ladders) > 0 {
+		ladder := matchDelayLadder(top.ladders, delay)
+		routingKey = ladder.RoutingKey
+	} else {
+		routingKey = top.delayRoutingKey
+		if top.delayQueue != "" {
+			publishing.Expiration = expirationMilliseconds(now, event.TimeoutAt)
+		}
+	}
+
+	if routingKey == "" {
+		routingKey = top.delayRoutingKey
+	}
+
+	return publishing, routingKey, nil
+}
+
 func (w *Worker) publishEvent(ctx context.Context, channel *amqp.Channel, outbox model.OrderTimeoutOutbox) error {
 	if channel == nil {
 		return errors.New("publish order timeout event: channel is nil")
@@ -344,24 +470,18 @@ func (w *Worker) publishEvent(ctx context.Context, channel *amqp.Channel, outbox
 		UserID:    outbox.UserID,
 		TimeoutAt: outbox.TimeoutAt,
 	}
-	body, err := encodeEvent(event)
+	publishing, routingKey, err := buildOrderTimeoutPublishing(w.now(), event, w.topology)
 	if err != nil {
-		return fmt.Errorf("encode order timeout event: %w", err)
+		return err
 	}
+
 	confirmation, err := channel.PublishWithDeferredConfirmWithContext(
 		ctx,
 		w.topology.exchange,
-		w.topology.delayRoutingKey,
+		routingKey,
 		false,
 		false,
-		amqp.Publishing{
-			DeliveryMode: amqp.Persistent,
-			ContentType:  "application/json",
-			MessageId:    event.EventID,
-			Timestamp:    w.now(),
-			Expiration:   expirationMilliseconds(w.now(), event.TimeoutAt),
-			Body:         body,
-		},
+		publishing,
 	)
 	if err != nil {
 		return fmt.Errorf("publish order timeout event: %w", err)

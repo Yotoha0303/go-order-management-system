@@ -98,7 +98,14 @@ func deleteTestTopology(t *testing.T, connection *amqp.Connection, topology topo
 		return
 	}
 	defer channel.Close()
-	for _, queue := range []string{topology.delayQueue, topology.cancelQueue, topology.failedQueue} {
+	queues := []string{topology.delayQueue, topology.cancelQueue, topology.failedQueue}
+	for _, l := range topology.ladders {
+		queues = append(queues, l.QueueName)
+	}
+	for _, queue := range queues {
+		if queue == "" {
+			continue
+		}
 		if _, err := channel.QueueDelete(queue, false, false, false); err != nil {
 			t.Logf("delete queue %s: %v", queue, err)
 		}
