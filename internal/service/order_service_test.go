@@ -653,6 +653,112 @@ func TestListOrders_RejectsInvalidPagination(t *testing.T) {
 	}
 }
 
+func TestListAdminOrders_ValidationAndPagination(t *testing.T) {
+	sqlDB := sql.OpenDB(&mockRRConnector{})
+	defer sqlDB.Close()
+
+	mockDB, err := gorm.Open(gormmysql.New(gormmysql.Config{
+		Conn:                      sqlDB,
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{
+		Logger: logger.Discard,
+	})
+	if err != nil {
+		t.Fatalf("failed to open mock gorm db: %v", err)
+	}
+
+	orderSvc := service.NewOrderService(mockDB)
+
+	t.Run("rejects negative user_id", func(t *testing.T) {
+		invalidUserID := int64(-1)
+		_, _, err := orderSvc.ListAdminOrders(context.Background(), request.ListAdminOrdersRequest{
+			UserID: &invalidUserID,
+		})
+		if !errors.Is(err, service.ErrInvalidUserID) {
+			t.Fatalf("expected ErrInvalidUserID, got %v", err)
+		}
+	})
+
+	t.Run("normalizes pagination and executes query", func(t *testing.T) {
+		status := int(model.OrderStatusPending)
+		userID := int64(42)
+		orders, total, err := orderSvc.ListAdminOrders(context.Background(), request.ListAdminOrdersRequest{
+			UserID:   &userID,
+			Status:   &status,
+			Page:     0,
+			PageSize: 0,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if orders == nil {
+			t.Fatalf("expected non-nil orders slice")
+		}
+		if total != 0 {
+			t.Fatalf("expected total 0 from mock, got %d", total)
+		}
+	})
+
+	t.Run("caps pageSize at 100", func(t *testing.T) {
+		orders, total, err := orderSvc.ListAdminOrders(context.Background(), request.ListAdminOrdersRequest{
+			Page:     1,
+			PageSize: 500,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if orders == nil {
+			t.Fatalf("expected non-nil orders slice")
+		}
+		if total != 0 {
+			t.Fatalf("expected total 0, got %d", total)
+		}
+	})
+}
+
+func TestListAdminOrders_IntegrationMySQL(t *testing.T) {
+	if os.Getenv("RUN_MYSQL_TEST") != "1" {
+		t.Skip("skip MySQL integration test; set RUN_MYSQL_TEST=1 to run")
+	}
+
+	testDB, orderSvc := newOrderService(t)
+	first := seedPendingOrder(t, testDB)
+	second := seedPendingOrder(t, testDB)
+
+	orders, total, err := orderSvc.ListAdminOrders(context.Background(), request.ListAdminOrdersRequest{})
+	if err != nil {
+		t.Fatalf("list admin orders failed: %v", err)
+	}
+	if total < 2 || len(orders) < 2 {
+		t.Fatalf("expected at least 2 orders, got total=%d len=%d", total, len(orders))
+	}
+
+	pendingStatus := int(model.OrderStatusPending)
+	pendingOrders, pendingTotal, err := orderSvc.ListAdminOrders(context.Background(), request.ListAdminOrdersRequest{
+		Status: &pendingStatus,
+	})
+	if err != nil {
+		t.Fatalf("list pending admin orders failed: %v", err)
+	}
+	if pendingTotal < 2 || len(pendingOrders) < 2 {
+		t.Fatalf("expected at least 2 pending orders, got total=%d len=%d", pendingTotal, len(pendingOrders))
+	}
+
+	cancelledStatus := int(model.OrderStatusCancelled)
+	cancelledOrders, cancelledTotal, err := orderSvc.ListAdminOrders(context.Background(), request.ListAdminOrdersRequest{
+		Status: &cancelledStatus,
+	})
+	if err != nil {
+		t.Fatalf("list cancelled admin orders failed: %v", err)
+	}
+	if cancelledTotal != 0 || len(cancelledOrders) != 0 {
+		t.Fatalf("expected 0 cancelled orders, got total=%d len=%d", cancelledTotal, len(cancelledOrders))
+	}
+
+	_ = first
+	_ = second
+}
+
 func TestPayOrder_FromPendingToPaid_Success(t *testing.T) {
 	testDB, orderSvc := newOrderService(t)
 

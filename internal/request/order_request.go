@@ -18,3 +18,21 @@ type ListOrderRequest struct {
 	Page     int `form:"page" binding:"gte=1,lte=1000000"`
 	PageSize int `form:"page_size" binding:"gte=1,lte=100"`
 }
+
+type ListAdminOrdersRequest struct {
+	UserID   *int64 `form:"user_id"`
+	Status   *int   `form:"status"`
+	Page     int    `form:"page,default=1"`
+	PageSize int    `form:"page_size,default=10"`
+}
+
+func (r *ListAdminOrdersRequest) NormalizePagination() {
+	if r.Page <= 0 {
+		r.Page = 1
+	}
+	if r.PageSize <= 0 {
+		r.PageSize = 10
+	} else if r.PageSize > 100 {
+		r.PageSize = 100
+	}
+}

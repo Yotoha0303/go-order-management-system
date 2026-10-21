@@ -41,6 +41,27 @@ func ListOrders(ctx context.Context, db *gorm.DB, userID int64, pageSize, offset
 	return orders, total, nil
 }
 
+func ListAdminOrders(ctx context.Context, db *gorm.DB, userID *int64, status *int, pageSize, offset int) ([]*model.Order, int64, error) {
+	var orders []*model.Order
+	query := db.WithContext(ctx).Model(&model.Order{})
+	if userID != nil {
+		query = query.Where("user_id = ?", *userID)
+	}
+	if status != nil {
+		query = query.Where("status = ?", *status)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := query.Order("id DESC").Limit(pageSize).Offset(offset).Find(&orders).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return orders, total, nil
+}
+
 func ListOrderItemsByOrderID(ctx context.Context, db *gorm.DB, orderID int64) ([]*model.OrderItem, error) {
 	var items []*model.OrderItem
 	return items, db.WithContext(ctx).Model(&model.OrderItem{}).Where("order_id = ?", orderID).Order("id ASC").Find(&items).Error

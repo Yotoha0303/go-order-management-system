@@ -74,7 +74,7 @@ func registerAPIRouter(
 	registerInventoryAPIRouter(protected, handlers.Inventory, roleChecker, handlers.Audit)
 	registerStockLogAPIRouter(protected, handlers.StockLog, roleChecker, handlers.Audit)
 	registerOperationLogAPIRouter(protected, handlers.OperationLog, roleChecker, handlers.Audit)
-	registerOrderAPIRouter(protected, handlers.Order)
+	registerOrderAPIRouter(protected, handlers.Order, roleChecker, handlers.Audit)
 }
 
 func registerAuthAPIRouter(rg *gin.RouterGroup, userHandler *handler.UserHandler) {
@@ -149,7 +149,12 @@ func registerOperationLogAPIRouter(
 	admin.GET("/operation-logs", operationLogHandler.ListOperationLogs)
 }
 
-func registerOrderAPIRouter(rg *gin.RouterGroup, orderHandler *handler.OrderHandler) {
+func registerOrderAPIRouter(
+	rg *gin.RouterGroup,
+	orderHandler *handler.OrderHandler,
+	roleChecker middleware.RoleChecker,
+	auditRecorder middleware.OperationAuditRecorder,
+) {
 
 	rg.POST("/orders", orderHandler.CreateOrder)
 	rg.GET("/orders/:id", orderHandler.GetOrderByID)
@@ -157,4 +162,8 @@ func registerOrderAPIRouter(rg *gin.RouterGroup, orderHandler *handler.OrderHand
 	rg.PATCH("/orders/:id/cancel", orderHandler.CancelOrders)
 	rg.PATCH("/orders/:id/pay", orderHandler.PayOrder)
 	rg.PATCH("/orders/:id/finish", orderHandler.FinishOrder)
+
+	admin := rg.Group("")
+	admin.Use(middleware.AdminMiddleware(roleChecker), middleware.OperationAudit(auditRecorder))
+	admin.GET("/admin/orders", orderHandler.ListAdminOrders)
 }

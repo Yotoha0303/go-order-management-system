@@ -400,6 +400,19 @@ func (p *OrderService) ListOrders(ctx context.Context, userID int64, page, pageS
 	return dao.ListOrders(ctx, p.db, userID, pageSize, offset)
 }
 
+func (p *OrderService) ListAdminOrders(ctx context.Context, req request.ListAdminOrdersRequest) ([]*model.Order, int64, error) {
+	req.NormalizePagination()
+	if req.Page <= 0 || req.Page > maxOrderPage || req.PageSize <= 0 || req.PageSize > maxOrderPageSize {
+		return nil, 0, ErrInvalidOrderPagination
+	}
+	if req.UserID != nil && *req.UserID <= 0 {
+		return nil, 0, ErrInvalidUserID
+	}
+
+	offset := (req.Page - 1) * req.PageSize
+	return dao.ListAdminOrders(ctx, p.db, req.UserID, req.Status, req.PageSize, offset)
+}
+
 func (p *OrderService) CancelOrder(ctx context.Context, userID, orderID int64) error {
 	restored := false
 	idempotent := false

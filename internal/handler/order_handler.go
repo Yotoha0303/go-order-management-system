@@ -14,6 +14,7 @@ import (
 type OrderService interface {
 	CreateOrder(ctx context.Context, userID int64, req request.CreateOrderRequest) (*model.Order, error)
 	ListOrders(ctx context.Context, userID int64, page, pageSize int) ([]*model.Order, int64, error)
+	ListAdminOrders(ctx context.Context, req request.ListAdminOrdersRequest) ([]*model.Order, int64, error)
 	GetOrderByID(ctx context.Context, userID, id int64) (*model.Order, []*model.OrderItem, error)
 	PayOrder(ctx context.Context, userID, orderID int64) error
 	FinishOrder(ctx context.Context, userID, orderID int64) error
@@ -72,6 +73,32 @@ func (p *OrderHandler) ListOrders(c *gin.Context) {
 	}
 
 	orders, total, err := p.orderService.ListOrders(c.Request.Context(), userID, req.Page, req.PageSize)
+	if err != nil {
+		handleError(c, err, response.CodeQueryOrderListFailed, "查询订单列表失败")
+		return
+	}
+
+	response.Success(c, response.OrderListResponse{
+		Orders:   orders,
+		Total:    total,
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	})
+}
+
+func (p *OrderHandler) ListAdminOrders(c *gin.Context) {
+	req := request.ListAdminOrdersRequest{
+		Page:     1,
+		PageSize: 10,
+	}
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Fail(c, http.StatusBadRequest, response.CodeOrderParameterError, "请求参数错误")
+		return
+	}
+
+	req.NormalizePagination()
+
+	orders, total, err := p.orderService.ListAdminOrders(c.Request.Context(), req)
 	if err != nil {
 		handleError(c, err, response.CodeQueryOrderListFailed, "查询订单列表失败")
 		return

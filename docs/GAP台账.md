@@ -18,7 +18,7 @@
 | **GAP-006** | P2 | 数据模型 | 库存模型缺少锁定库存（`locked_quantity`）设计，且定时对账 Worker 缺乏自愈机制 | [#7](https://github.com/Yotoha0303/go-order-management-system/issues/7) | CLOSED | `data-engineer` / `backend-dev` |
 | **GAP-007** | **P0** | 库存并发 | `AddInventory` 补货使用绝对值覆盖写入 Redis，并发入库存在库存回退竞态 Bug | [#8](https://github.com/Yotoha0303/go-order-management-system/issues/8) | CLOSED | `backend-dev` / `data-engineer` |
 | **GAP-008** | P1 | 队列拓扑 | RabbitMQ 死信失败队列 `order.timeout.failed` 缺乏消费者与告警，形成消息堆积黑洞 | [#9](https://github.com/Yotoha0303/go-order-management-system/issues/9) | CLOSED | `sre-operator` / `backend-dev` |
-| **GAP-009** | P2 | 业务权限 | 缺少管理员全局订单列表与审计视图，管理后台无法查询与干预全平台订单 | [#10](https://github.com/Yotoha0303/go-order-management-system/issues/10) | OPEN | `backend-dev` / `sec-auditor` |
+| **GAP-009** | P2 | 业务权限 | 缺少管理员全局订单列表与审计视图，管理后台无法查询与干预全平台订单 | [#10](https://github.com/Yotoha0303/go-order-management-system/issues/10) | CLOSED | `backend-dev` / `sec-auditor` |
 | **GAP-010** | P2 | 缓存安全 | 商品详情缓存查询缺乏防穿透（空值缓存/布隆）设计，非法 ID 可打爆底层 MySQL | [#11](https://github.com/Yotoha0303/go-order-management-system/issues/11) | CLOSED | `backend-dev` / `sec-auditor` |
 | **GAP-011** | P1 | 测试架构 | 修复测试套件中并发幂等的错误断言，消除 `t.Skip` 导致的本地开发虚假全绿 | [#12](https://github.com/Yotoha0303/go-order-management-system/issues/12) | CLOSED | `qa-validator` / `backend-dev` |
 
@@ -116,6 +116,11 @@
 - **DoD**：
   1. 新增 `/api/v1/admin/orders` 路由及分页筛选 Handler；
   2. 接入 `operation_logs` 审计记录。
+- **解决闭环 (2026-10-21)**：
+  - 请求模型与防御：新增 `ListAdminOrdersRequest` 并通过 `NormalizePagination` 进行分页防御（缺省 page=1, pageSize=10, 封顶 100）；
+  - 持久层与服务层：在 `order_dao.go` 实现 `ListAdminOrders` 支持 `user_id` 与 `status` 多维动态过滤与稳定降序分页；服务层拦截非法负数 `user_id`；
+  - 路由与审计安全网：在 `router.go` 挂载 `admin := rg.Group("")`，使用 `middleware.AdminMiddleware` 强制 RBAC 权限校验（非 admin 返回 403 Forbidden），接入 `middleware.OperationAudit` 自动捕获管理员操作审计流水（UserID、Path、Method、Status）；
+  - 验证与审计：通过 `qa-validator` 四项质量门禁复核、`falsifier` 4 组变异证伪攻击（移除 RBAC 拦截、移除审计中间件、放行负数 user_id、清空分页纠偏全拦截），`golangci-lint` 0 issues，通过 `gate-auditor` 转段门禁裁决。见 `docs/changes/010-fix-gap-009-admin-orders-and-audit.md`。
 
 ### GAP-010 · 商品详情缓存防穿透加固
 - **现状**：查询非法/不存在的 `product_id` 时，Redis 返回 Nil 后穿透查 DB，未写空值缓存。
