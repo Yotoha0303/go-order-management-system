@@ -46,15 +46,17 @@ func (p *ProductService) ListProducts(ctx context.Context, req request.ListProdu
 }
 
 func (p *ProductService) GetProductByID(ctx context.Context, id int64) (*model.Product, error) {
-
 	if product, ok := p.cache.GetProductDetail(ctx, id); ok {
+		if product == nil {
+			return nil, ErrProductNotFound
+		}
 		return product, nil
 	}
 
 	product, err := dao.GetProductByID(ctx, p.db, id)
-
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			p.cache.SetProductDetailEmpty(ctx, id)
 			return nil, ErrProductNotFound
 		}
 		return nil, err
@@ -66,15 +68,12 @@ func (p *ProductService) GetProductByID(ctx context.Context, id int64) (*model.P
 }
 
 func (p *ProductService) OnSaleProduct(ctx context.Context, id int64) error {
-
 	product, err := dao.GetProductByID(ctx, p.db, id)
 	if err != nil {
-
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrProductNotFound
 		}
 		return err
-
 	}
 
 	if product.Status == model.ProductStatusOnSale {
@@ -91,16 +90,12 @@ func (p *ProductService) OnSaleProduct(ctx context.Context, id int64) error {
 }
 
 func (p *ProductService) OffSaleProduct(ctx context.Context, id int64) error {
-
 	product, err := dao.GetProductByID(ctx, p.db, id)
-
 	if err != nil {
-
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrProductNotFound
 		}
 		return err
-
 	}
 
 	if product.Status == model.ProductStatusOffSale {

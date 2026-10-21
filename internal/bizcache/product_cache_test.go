@@ -5,6 +5,7 @@ import (
 	"go-order-management-system/internal/bizcache"
 	"go-order-management-system/internal/model"
 	"testing"
+	"time"
 )
 
 func newTestProductCache() *bizcache.ProductCache {
@@ -12,17 +13,14 @@ func newTestProductCache() *bizcache.ProductCache {
 }
 
 func TestProductDetailCacheKey(t *testing.T) {
-
 	got := bizcache.ProductDetailCacheKey(1001)
 	want := "product:detail:1001"
 	if got != want {
 		t.Fatalf("productDetailCacheKey(1001) = %q, want %q", got, want)
 	}
-
 }
 
 func TestProductDetailCache_NoRedis(t *testing.T) {
-
 	cache := newTestProductCache()
 
 	var noExistProductID = int64(1002)
@@ -35,6 +33,20 @@ func TestProductDetailCache_NoRedis(t *testing.T) {
 
 	cache.SetProductDetail(ctx, &model.Product{ID: noExistProductID, Name: "test no redis"})
 	cache.DeleteProductDetailCache(ctx, noExistProductID)
+}
+
+func TestProductDetailCache_NoRedis_Empty(t *testing.T) {
+	cache := newTestProductCache()
+	ctx := context.Background()
+
+	cache.SetProductDetailEmpty(ctx, 1003)
+	cache.SetProductDetailEmpty(ctx, 0)
+	cache.SetProductDetailEmpty(ctx, -1)
+
+	product, ok := cache.GetProductDetail(ctx, 1003)
+	if ok || product != nil {
+		t.Fatalf("expected miss when redis is nil, got product=%v ok=%v", product, ok)
+	}
 }
 
 func TestProductDetailCache_SetGet_WithRedis(t *testing.T) {
@@ -99,6 +111,46 @@ func TestProductDetailCache_DeleteMiss_WithRedis(t *testing.T) {
 	}
 
 	defer cache.DeleteProductDetailCache(context.Background(), product.ID)
+}
+
+func TestProductDetailCache_EmptySentinel_WithRedis(t *testing.T) {
+	client := setupTestRedis(t)
+	cache := bizcache.NewProductCache(client)
+	ctx := context.Background()
+
+	productID := int64(999999)
+
+	cache.SetProductDetailEmpty(ctx, productID)
+
+	rawVal, err := client.Get(ctx, bizcache.ProductDetailCacheKey(productID)).Result()
+	if err != nil {
+		t.Fatalf("get raw redis value failed: %v", err)
+	}
+	if rawVal != bizcache.ProductDetailNullSentinel {
+		t.Fatalf("expected raw value %q, got %q", bizcache.ProductDetailNullSentinel, rawVal)
+	}
+
+	ttl, err := client.TTL(ctx, bizcache.ProductDetailCacheKey(productID)).Result()
+	if err != nil {
+		t.Fatalf("get ttl failed: %v", err)
+	}
+	if ttl <= 0 || ttl > bizcache.ProductDetailNullCacheTTL+16*time.Second {
+		t.Fatalf("expected ttl within [60s, 76s], got %v", ttl)
+	}
+
+	got, ok := cache.GetProductDetail(ctx, productID)
+	if !ok {
+		t.Fatalf("expected cache hit for null sentinel, got ok=false")
+	}
+	if got != nil {
+		t.Fatalf("expected nil product for null sentinel hit, got %+v", got)
+	}
+
+	cache.DeleteProductDetailCache(ctx, productID)
+	got, ok = cache.GetProductDetail(ctx, productID)
+	if ok || got != nil {
+		t.Fatalf("expected cache miss after delete, got product=%v ok=%v", got, ok)
+	}
 }
 
 func TestProductDetailCache_TTL_WithRedis(t *testing.T) {

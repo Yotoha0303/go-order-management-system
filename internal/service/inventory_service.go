@@ -224,10 +224,6 @@ func (p *InventoryService) SetInventoryStock(ctx context.Context, productID int6
 	p.stockWriter.SetInventoryStock(context.WithoutCancel(ctx), productID, quantity)
 }
 
-func (p *InventoryService) setInventoryStock(ctx context.Context, productID int64, quantity int64) {
-	p.SetInventoryStock(ctx, productID, quantity)
-}
-
 func (p *InventoryService) incrInventoryStock(ctx context.Context, productID int64, delta int64, fallbackQuantity int64) {
 	if p == nil || p.stockWriter == nil {
 		return

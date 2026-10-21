@@ -2,15 +2,19 @@ package service_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"go-order-management-system/internal/bizcache"
 	"go-order-management-system/internal/model"
 	"go-order-management-system/internal/request"
 	"go-order-management-system/internal/service"
+	"os"
 	"strings"
 	"testing"
 
+	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func newProductService(t *testing.T) (*gorm.DB, *service.ProductService) {
@@ -25,15 +29,26 @@ type fakeProductCache struct {
 	product          *model.Product
 	hit              bool
 	setProduct       *model.Product
+	emptyProductID   int64
 	deletedProductID int64
+	emptyCallCount   int
+	getCallCount     int
 }
 
 func (f *fakeProductCache) GetProductDetail(context.Context, int64) (*model.Product, bool) {
+	f.getCallCount++
 	return f.product, f.hit
 }
 
 func (f *fakeProductCache) SetProductDetail(_ context.Context, product *model.Product) {
 	f.setProduct = product
+}
+
+func (f *fakeProductCache) SetProductDetailEmpty(_ context.Context, productID int64) {
+	f.emptyProductID = productID
+	f.emptyCallCount++
+	f.product = nil
+	f.hit = true
 }
 
 func (f *fakeProductCache) DeleteProductDetailCache(_ context.Context, productID int64) {
@@ -280,9 +295,23 @@ func TestListProducts_Pagination(t *testing.T) {
 }
 
 func TestGetProductByID_NotFound(t *testing.T) {
-	_, productSvc := newProductService(t)
+	sqlDB := sql.OpenDB(&mockRRConnector{})
+	defer sqlDB.Close()
 
-	_, err := productSvc.GetProductByID(context.Background(), 99999)
+	mockDB, err := gorm.Open(gormmysql.New(gormmysql.Config{
+		Conn:                      sqlDB,
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{
+		Logger: logger.Discard,
+	})
+	if err != nil {
+		t.Fatalf("failed to open mock gorm db: %v", err)
+	}
+
+	cache := &fakeProductCache{}
+	productSvc := service.NewProductService(mockDB, cache)
+
+	_, err = productSvc.GetProductByID(context.Background(), 99999)
 	if !errors.Is(err, service.ErrProductNotFound) {
 		t.Fatalf("expected ErrProductNotFound, got %v", err)
 	}
@@ -325,6 +354,113 @@ func TestGetProductByID_CacheMissSetsCache(t *testing.T) {
 	}
 	if cache.setProduct == nil || cache.setProduct.ID != expected.ID {
 		t.Fatalf("expected product %d to be cached, got %+v", expected.ID, cache.setProduct)
+	}
+}
+
+func TestGetProductByID_NullCacheHit(t *testing.T) {
+	cache := &fakeProductCache{product: nil, hit: true}
+	// 传入 nil db：若发生回源 DB 查询必触发 nil pointer panic，以此铁证零 DB 查询
+	productSvc := service.NewProductService(nil, cache)
+
+	got, err := productSvc.GetProductByID(context.Background(), 99999)
+	if !errors.Is(err, service.ErrProductNotFound) {
+		t.Fatalf("expected ErrProductNotFound on null cache hit, got err=%v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil product on null cache hit, got %+v", got)
+	}
+	if cache.getCallCount != 1 {
+		t.Fatalf("expected 1 cache get call, got %d", cache.getCallCount)
+	}
+}
+
+func TestGetProductByID_CachePenetrationPrevention_UnitMock(t *testing.T) {
+	sqlDB := sql.OpenDB(&mockRRConnector{})
+	defer sqlDB.Close()
+
+	mockDB, err := gorm.Open(gormmysql.New(gormmysql.Config{
+		Conn:                      sqlDB,
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{
+		Logger: logger.Discard,
+	})
+	if err != nil {
+		t.Fatalf("failed to open mock gorm db: %v", err)
+	}
+
+	cache := &fakeProductCache{}
+	productSvc := service.NewProductService(mockDB, cache)
+
+	invalidID := int64(88888)
+
+	// 第 1 次请求：缓存未命中，回源 DB（返回 ErrRecordNotFound），触发 SetProductDetailEmpty
+	got1, err1 := productSvc.GetProductByID(context.Background(), invalidID)
+	if !errors.Is(err1, service.ErrProductNotFound) {
+		t.Fatalf("1st call: expected ErrProductNotFound, got %v", err1)
+	}
+	if got1 != nil {
+		t.Fatalf("1st call: expected nil product, got %+v", got1)
+	}
+	if cache.emptyCallCount != 1 {
+		t.Fatalf("1st call: expected SetProductDetailEmpty called once, got %d", cache.emptyCallCount)
+	}
+	if cache.emptyProductID != invalidID {
+		t.Fatalf("1st call: expected emptyProductID=%d, got %d", invalidID, cache.emptyProductID)
+	}
+
+	// 此时 fakeProductCache 已模拟写入空值哨兵 (hit=true, product=nil)
+	// 第 2 次请求：直接命中 Redis 空值哨兵，零 DB 查询阻断穿透
+	// 为绝对证明零 DB 访问，将 productSvc 的 db 替换为 nil，若发生 DB 查询必触发 panic
+	nilDBSvc := service.NewProductService(nil, cache)
+	got2, err2 := nilDBSvc.GetProductByID(context.Background(), invalidID)
+	if !errors.Is(err2, service.ErrProductNotFound) {
+		t.Fatalf("2nd call: expected ErrProductNotFound, got %v", err2)
+	}
+	if got2 != nil {
+		t.Fatalf("2nd call: expected nil product, got %+v", got2)
+	}
+	if cache.getCallCount != 2 {
+		t.Fatalf("expected total 2 cache get calls, got %d", cache.getCallCount)
+	}
+}
+
+func TestGetProductByID_CachePenetrationPrevention_IntegrationMySQL(t *testing.T) {
+	if os.Getenv("RUN_MYSQL_TEST") != "1" {
+		t.Skip("skip MySQL integration test; set RUN_MYSQL_TEST=1 to run")
+	}
+
+	testDB := setupTestDB(t)
+	cache := &fakeProductCache{}
+	productSvc := service.NewProductService(testDB, cache)
+
+	invalidID := int64(88888)
+
+	// 第 1 次请求：缓存未命中，回源真实 MySQL 返回 ErrRecordNotFound，触发 SetProductDetailEmpty
+	got1, err1 := productSvc.GetProductByID(context.Background(), invalidID)
+	if !errors.Is(err1, service.ErrProductNotFound) {
+		t.Fatalf("1st call: expected ErrProductNotFound, got %v", err1)
+	}
+	if got1 != nil {
+		t.Fatalf("1st call: expected nil product, got %+v", got1)
+	}
+	if cache.emptyCallCount != 1 {
+		t.Fatalf("1st call: expected SetProductDetailEmpty called once, got %d", cache.emptyCallCount)
+	}
+	if cache.emptyProductID != invalidID {
+		t.Fatalf("1st call: expected emptyProductID=%d, got %d", invalidID, cache.emptyProductID)
+	}
+
+	// 第 2 次请求：零 DB 查询，直接命中空值哨兵
+	nilDBSvc := service.NewProductService(nil, cache)
+	got2, err2 := nilDBSvc.GetProductByID(context.Background(), invalidID)
+	if !errors.Is(err2, service.ErrProductNotFound) {
+		t.Fatalf("2nd call: expected ErrProductNotFound, got %v", err2)
+	}
+	if got2 != nil {
+		t.Fatalf("2nd call: expected nil product, got %+v", got2)
+	}
+	if cache.getCallCount != 2 {
+		t.Fatalf("expected total 2 cache get calls, got %d", cache.getCallCount)
 	}
 }
 

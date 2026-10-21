@@ -22,5 +22,6 @@ func NewProductService(db *gorm.DB, cache ProductCache) *ProductService {
 type ProductCache interface {
 	GetProductDetail(ctx context.Context, productID int64) (*model.Product, bool)
 	SetProductDetail(ctx context.Context, product *model.Product)
+	SetProductDetailEmpty(ctx context.Context, productID int64)
 	DeleteProductDetailCache(ctx context.Context, productID int64)
 }

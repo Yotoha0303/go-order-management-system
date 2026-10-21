@@ -19,7 +19,7 @@
 | **GAP-007** | **P0** | 库存并发 | `AddInventory` 补货使用绝对值覆盖写入 Redis，并发入库存在库存回退竞态 Bug | [#8](https://github.com/Yotoha0303/go-order-management-system/issues/8) | CLOSED | `backend-dev` / `data-engineer` |
 | **GAP-008** | P1 | 队列拓扑 | RabbitMQ 死信失败队列 `order.timeout.failed` 缺乏消费者与告警，形成消息堆积黑洞 | [#9](https://github.com/Yotoha0303/go-order-management-system/issues/9) | CLOSED | `sre-operator` / `backend-dev` |
 | **GAP-009** | P2 | 业务权限 | 缺少管理员全局订单列表与审计视图，管理后台无法查询与干预全平台订单 | [#10](https://github.com/Yotoha0303/go-order-management-system/issues/10) | OPEN | `backend-dev` / `sec-auditor` |
-| **GAP-010** | P2 | 缓存安全 | 商品详情缓存查询缺乏防穿透（空值缓存/布隆）设计，非法 ID 可打爆底层 MySQL | [#11](https://github.com/Yotoha0303/go-order-management-system/issues/11) | OPEN | `backend-dev` / `sec-auditor` |
+| **GAP-010** | P2 | 缓存安全 | 商品详情缓存查询缺乏防穿透（空值缓存/布隆）设计，非法 ID 可打爆底层 MySQL | [#11](https://github.com/Yotoha0303/go-order-management-system/issues/11) | CLOSED | `backend-dev` / `sec-auditor` |
 | **GAP-011** | P1 | 测试架构 | 修复测试套件中并发幂等的错误断言，消除 `t.Skip` 导致的本地开发虚假全绿 | [#12](https://github.com/Yotoha0303/go-order-management-system/issues/12) | CLOSED | `qa-validator` / `backend-dev` |
 
 ---
@@ -123,6 +123,11 @@
 - **DoD**：
   1. 引入空对象缓存（Null Object）机制，设置短 TTL（如 30s~60s）并加随机抖动；
   2. 编写穿透验证测试，证明同非法 ID 后续请求直接命中 Redis 空值。
+- **解决闭环 (2026-10-21)**：
+  - 架构方案与哨兵设计：遵循 ADR-001 高并发缓存与防穿透设计，定义空值哨兵 `ProductDetailNullSentinel = "__NULL_PRODUCT__"`；
+  - 防雪崩抖动：引入 `nullCacheTTLWithJitter()`，设置短 TTL 60s 并附加 0~15s 纳秒时间抖动，杜绝批量空值同时到期雪崩；
+  - 零 DB 穿透业务防线：在 `product_service.go` 的 `GetProductByID` 识别三态命中（有效商品返回、命中哨兵秒级直接返回 `ErrProductNotFound` 达成零 DB 查询、未命中回源 DB `gorm.ErrRecordNotFound` 立即触发空哨兵写回）；
+  - 验证与审计：单测注入 `nil db` 硬核证明零 DB 访问防穿透；`golangci-lint` 0 issues；通过 `falsifier` 4 组变异证伪攻击（空值写入移除、哨兵误判穿透、抖动算法越界、错误返回遗漏全拦截）与 `gate-auditor` 转段门禁裁决。见 `docs/changes/009-fix-gap-010-product-cache-null-object.md`。
 
 ### GAP-011 · 纠正并发幂等测试断言与虚假全绿
 - **现状**：`RUN_MYSQL_TEST` 缺省时静默跳过核心测试；并发幂等测试断言错误假设所有请求成功返回 nil。
