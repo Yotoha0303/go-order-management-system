@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"go-order-management-system/internal/bizcache"
@@ -32,6 +33,7 @@ func TestInventoryStockGuard_NoRedis(t *testing.T) {
 	guard.RestorePreDeductedInventory(context.Background(), 1)
 	guard.ConfirmPreDeductedInventory(context.Background(), 1)
 	guard.SetInventoryStock(context.Background(), 1, 10)
+	guard.IncrInventoryStock(context.Background(), 1, 5, 15)
 }
 
 func TestInventoryStockGuard_RecordsDisabledMetrics(t *testing.T) {
@@ -198,5 +200,97 @@ func TestInventoryStockGuard_ConfirmDeletesReservation_WithRedis(t *testing.T) {
 	}
 	if stock != 3 {
 		t.Fatalf("expected confirmed redis stock to remain 3, got %d", stock)
+	}
+}
+
+func TestInventoryStockGuard_IncrInventoryStock_DisabledValidation(t *testing.T) {
+	metrics := observability.NewBusinessMetrics()
+	guard := bizcache.NewInventoryStockGuardWithMetrics(nil, metrics)
+
+	// nil redis
+	guard.IncrInventoryStock(context.Background(), 10, 5, 15)
+	// invalid productID
+	guard.IncrInventoryStock(context.Background(), 0, 5, 15)
+	guard.IncrInventoryStock(context.Background(), -1, 5, 15)
+	// invalid delta
+	guard.IncrInventoryStock(context.Background(), 10, 0, 15)
+	guard.IncrInventoryStock(context.Background(), 10, -2, 15)
+	// invalid fallbackQuantity
+	guard.IncrInventoryStock(context.Background(), 10, 5, -1)
+
+	output := metrics.RenderPrometheus()
+	want := `app_redis_inventory_sync_total{result="disabled"} 6`
+	if !strings.Contains(output, want) {
+		t.Fatalf("expected metrics output to contain %q, got:\n%s", want, output)
+	}
+}
+
+func TestInventoryStockGuard_IncrInventoryStock_WithRedis(t *testing.T) {
+	client := setupTestRedis(t)
+	metrics := observability.NewBusinessMetrics()
+	guard := bizcache.NewInventoryStockGuardWithMetrics(client, metrics)
+	ctx := context.Background()
+	const productID int64 = 91010
+	defer client.Del(ctx, bizcache.InventoryAvailableKey(productID))
+
+	_ = client.Del(ctx, bizcache.InventoryAvailableKey(productID)).Err()
+
+	// 1. Cold start fallback: key absent -> set to fallbackQuantity
+	guard.IncrInventoryStock(ctx, productID, 10, 50)
+	stock, err := client.Get(ctx, bizcache.InventoryAvailableKey(productID)).Int64()
+	if err != nil {
+		t.Fatalf("query redis stock after cold start failed: %v", err)
+	}
+	if stock != 50 {
+		t.Fatalf("expected cold start fallback stock 50, got %d", stock)
+	}
+
+	// 2. Key exists: atomic INCRBY delta
+	guard.IncrInventoryStock(ctx, productID, 25, 75)
+	stock, err = client.Get(ctx, bizcache.InventoryAvailableKey(productID)).Int64()
+	if err != nil {
+		t.Fatalf("query redis stock after increment failed: %v", err)
+	}
+	if stock != 75 {
+		t.Fatalf("expected incremental stock 75, got %d", stock)
+	}
+
+	output := metrics.RenderPrometheus()
+	want := `app_redis_inventory_sync_total{result="success"} 2`
+	if !strings.Contains(output, want) {
+		t.Fatalf("expected metrics output to contain %q, got:\n%s", want, output)
+	}
+}
+
+func TestInventoryStockGuard_IncrInventoryStock_Concurrent_WithRedis(t *testing.T) {
+	client := setupTestRedis(t)
+	guard := bizcache.NewInventoryStockGuard(client)
+	ctx := context.Background()
+	const productID int64 = 91011
+	defer client.Del(ctx, bizcache.InventoryAvailableKey(productID))
+
+	// Initial stock 100
+	guard.SetInventoryStock(ctx, productID, 100)
+
+	// 20 concurrent increments of +5
+	const concurrency = 20
+	const delta = 5
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			guard.IncrInventoryStock(ctx, productID, delta, 0)
+		}()
+	}
+	wg.Wait()
+
+	stock, err := client.Get(ctx, bizcache.InventoryAvailableKey(productID)).Int64()
+	if err != nil {
+		t.Fatalf("query redis stock after concurrent incr failed: %v", err)
+	}
+	expected := int64(100 + concurrency*delta)
+	if stock != expected {
+		t.Fatalf("expected final stock %d, got %d (race condition detected!)", expected, stock)
 	}
 }

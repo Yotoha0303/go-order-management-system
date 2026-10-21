@@ -15,6 +15,7 @@ type InventoryService struct {
 
 type InventoryStockWriter interface {
 	SetInventoryStock(ctx context.Context, productID int64, quantity int64)
+	IncrInventoryStock(ctx context.Context, productID int64, delta int64, fallbackQuantity int64)
 }
 
 type InventoryStockRebuilder interface {

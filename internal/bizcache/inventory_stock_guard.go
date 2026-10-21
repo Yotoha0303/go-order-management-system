@@ -93,6 +93,15 @@ redis.call("DEL", KEYS[1])
 return 1
 `
 
+const incrInventoryStockScript = `
+if redis.call("EXISTS", KEYS[1]) == 1 then
+    return redis.call("INCRBY", KEYS[1], ARGV[1])
+else
+    redis.call("SET", KEYS[1], ARGV[2])
+    return tonumber(ARGV[2])
+end
+`
+
 func (g *InventoryStockGuard) PreDeductInventory(
 	ctx context.Context,
 	orderID int64,
@@ -172,6 +181,21 @@ func (g *InventoryStockGuard) SetInventoryStock(ctx context.Context, productID i
 	defer cancel()
 	if err := g.redisClient.Set(ctx, InventoryAvailableKey(productID), quantity, 0).Err(); err != nil {
 		log.Printf("redis inventory stock sync failed: product_id=%d err=%v", productID, err)
+		g.recordSync("error")
+		return
+	}
+	g.recordSync("success")
+}
+
+func (g *InventoryStockGuard) IncrInventoryStock(ctx context.Context, productID int64, delta int64, fallbackQuantity int64) {
+	if g == nil || g.redisClient == nil || productID <= 0 || delta <= 0 || fallbackQuantity < 0 {
+		g.recordSync("disabled")
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, inventoryStockGuardTimeout)
+	defer cancel()
+	if err := g.redisClient.Eval(ctx, incrInventoryStockScript, []string{InventoryAvailableKey(productID)}, delta, fallbackQuantity).Err(); err != nil {
+		log.Printf("redis inventory stock incr failed: product_id=%d delta=%d fallback=%d err=%v", productID, delta, fallbackQuantity, err)
 		g.recordSync("error")
 		return
 	}

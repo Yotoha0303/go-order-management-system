@@ -68,7 +68,7 @@ func main() {
 		fmt.Print(markdown)
 		return
 	}
-	if err := os.WriteFile(*output, []byte(markdown), 0o644); err != nil {
+	if err := os.WriteFile(*output, []byte(markdown), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, "write report failed:", err)
 		os.Exit(1)
 	}

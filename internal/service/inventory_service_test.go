@@ -17,9 +17,16 @@ func newInventoryService(t *testing.T) (*gorm.DB, *service.InventoryService) {
 	return testDB, service.NewInventoryService(testDB)
 }
 
+type fakeIncrInventoryStockCall struct {
+	ProductID        int64
+	Delta            int64
+	FallbackQuantity int64
+}
+
 type fakeInventoryStockWriter struct {
 	productIDs         []int64
 	quantities         []int64
+	incrCalls          []fakeIncrInventoryStockCall
 	rebuildInventories []*model.Inventory
 	rebuildCount       int
 	rebuildErr         error
@@ -30,6 +37,14 @@ type fakeInventoryStockWriter struct {
 func (f *fakeInventoryStockWriter) SetInventoryStock(_ context.Context, productID int64, quantity int64) {
 	f.productIDs = append(f.productIDs, productID)
 	f.quantities = append(f.quantities, quantity)
+}
+
+func (f *fakeInventoryStockWriter) IncrInventoryStock(_ context.Context, productID int64, delta int64, fallbackQuantity int64) {
+	f.incrCalls = append(f.incrCalls, fakeIncrInventoryStockCall{
+		ProductID:        productID,
+		Delta:            delta,
+		FallbackQuantity: fallbackQuantity,
+	})
 }
 
 func (f *fakeInventoryStockWriter) RebuildInventoryStocks(_ context.Context, inventories []*model.Inventory) (int, error) {
@@ -153,8 +168,15 @@ func TestAddInventory_SyncsRedisStock(t *testing.T) {
 		t.Fatalf("add inventory failed: %v", err)
 	}
 
-	if len(writer.productIDs) != 1 || writer.productIDs[0] != product.ID || writer.quantities[0] != 15 {
-		t.Fatalf("expected redis stock sync product=%d qty=%d, got products=%v quantities=%v", product.ID, int64(15), writer.productIDs, writer.quantities)
+	if len(writer.productIDs) != 0 {
+		t.Fatalf("expected SetInventoryStock not called, got %v", writer.productIDs)
+	}
+	if len(writer.incrCalls) != 1 {
+		t.Fatalf("expected 1 incr call, got %d", len(writer.incrCalls))
+	}
+	call := writer.incrCalls[0]
+	if call.ProductID != product.ID || call.Delta != 5 || call.FallbackQuantity != 15 {
+		t.Fatalf("expected incr call product=%d delta=5 fallback=15, got %+v", product.ID, call)
 	}
 }
 
@@ -261,5 +283,33 @@ func TestInitInventory_CreateStockLog(t *testing.T) {
 
 	if log.ChangeQuantity != qty || log.AfterQuantity != qty || log.BizType != model.StockBizInit {
 		t.Fatalf("unexpected stock log data: %+v", log)
+	}
+}
+
+func TestAddInventory_Validation_NoDB(t *testing.T) {
+	writer := &fakeInventoryStockWriter{}
+	svc := service.NewInventoryServiceWithStockWriter(nil, writer)
+
+	// 1. Zero quantity rejected
+	err := svc.AddInventory(context.Background(), request.AddInventoryRequest{
+		ProductID: 1,
+		Quantity:  0,
+	})
+	if !errors.Is(err, service.ErrInvalidAddQuantity) {
+		t.Fatalf("expected ErrInvalidAddQuantity, got %v", err)
+	}
+
+	// 2. Negative quantity rejected
+	err = svc.AddInventory(context.Background(), request.AddInventoryRequest{
+		ProductID: 1,
+		Quantity:  -10,
+	})
+	if !errors.Is(err, service.ErrInvalidAddQuantity) {
+		t.Fatalf("expected ErrInvalidAddQuantity, got %v", err)
+	}
+
+	// 3. Verify no stock writer methods were invoked
+	if len(writer.incrCalls) != 0 || len(writer.productIDs) != 0 {
+		t.Fatalf("expected no stockWriter calls on invalid request, got incr=%v set=%v", writer.incrCalls, writer.productIDs)
 	}
 }

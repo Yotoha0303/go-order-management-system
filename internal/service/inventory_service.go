@@ -131,7 +131,7 @@ func (p *InventoryService) AddInventory(ctx context.Context, req request.AddInve
 		return err
 	}
 
-	p.setInventoryStock(ctx, req.ProductID, afterQuantity)
+	p.incrInventoryStock(ctx, req.ProductID, req.Quantity, afterQuantity)
 	return nil
 }
 
@@ -211,4 +211,11 @@ func (p *InventoryService) setInventoryStock(ctx context.Context, productID int6
 		return
 	}
 	p.stockWriter.SetInventoryStock(context.WithoutCancel(ctx), productID, quantity)
+}
+
+func (p *InventoryService) incrInventoryStock(ctx context.Context, productID int64, delta int64, fallbackQuantity int64) {
+	if p == nil || p.stockWriter == nil {
+		return
+	}
+	p.stockWriter.IncrInventoryStock(context.WithoutCancel(ctx), productID, delta, fallbackQuantity)
 }

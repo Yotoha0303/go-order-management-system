@@ -13,3 +13,12 @@
 - **Context**: 遇到了什么问题，当前的瓶颈与约束是什么？
 - **Decision**: 做出了什么架构决策，技术选型是什么？
 - **Consequences**: 该决策带来的收益、代价与权衡（Trade-offs）。
+
+---
+
+## 决策记录索引
+
+| 编号 | 标题 | 状态 | 关联 GAP | 责任角色 |
+| :--- | :--- | :---: | :--- | :--- |
+| [ADR-001](001-high-concurrency-distributed-consistency-inventory-architecture.md) | 高并发低延迟与分布式最终一致性库存架构设计 | `Proposed` | GAP-001, GAP-002, GAP-005, GAP-007 | `system-architect` |
+
