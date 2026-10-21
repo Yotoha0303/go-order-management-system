@@ -14,6 +14,7 @@ func TestBusinessMetricsRenderPrometheus(t *testing.T) {
 	metrics.RecordRedisInventoryPreDeduct("applied")
 	metrics.RecordRedisInventoryReservation("release", "success")
 	metrics.RecordRedisInventorySync("error")
+	metrics.RecordOrderTimeoutDeadLetter("max_retries_exceeded", "stored")
 
 	output := metrics.RenderPrometheus()
 	for _, want := range []string{
@@ -23,6 +24,7 @@ func TestBusinessMetricsRenderPrometheus(t *testing.T) {
 		`app_redis_inventory_prededuct_total{result="applied"} 1`,
 		`app_redis_inventory_reservation_total{action="release",result="success"} 1`,
 		`app_redis_inventory_sync_total{result="error"} 1`,
+		`app_order_timeout_dead_letter_total{handled="stored",reason="max_retries_exceeded"} 1`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected metrics output to contain %q, got:\n%s", want, output)

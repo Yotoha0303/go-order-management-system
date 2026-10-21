@@ -2,6 +2,7 @@ package ordertimeout
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -28,6 +29,7 @@ const (
 
 	defaultMaxOutboxAttempts = 10
 	maxOutboxBackoffDelay    = 10 * time.Minute
+	defaultMaxCancelRetries  = 3
 )
 
 type topology struct {
@@ -54,6 +56,10 @@ type ExpiredOrderCanceller interface {
 	CancelExpiredOrder(ctx context.Context, eventID string, orderID int64) error
 }
 
+type DeadLetterMetrics interface {
+	RecordOrderTimeoutDeadLetter(reason, handled string)
+}
+
 type Config struct {
 	URL                string
 	ConnectTimeout     time.Duration
@@ -71,6 +77,7 @@ type Worker struct {
 	logger    *slog.Logger
 	now       func() time.Time
 	topology  topology
+	metrics   DeadLetterMetrics
 }
 
 func NewWorker(config Config, db *gorm.DB, canceller ExpiredOrderCanceller, logger *slog.Logger) (*Worker, error) {
@@ -99,6 +106,19 @@ func NewWorker(config Config, db *gorm.DB, canceller ExpiredOrderCanceller, logg
 		now:       time.Now,
 		topology:  productionTopology,
 	}, nil
+}
+
+func NewWorkerWithMetrics(config Config, db *gorm.DB, canceller ExpiredOrderCanceller, logger *slog.Logger, metrics DeadLetterMetrics) (*Worker, error) {
+	worker, err := NewWorker(config, db, canceller, logger)
+	if err != nil {
+		return nil, err
+	}
+	worker.metrics = metrics
+	return worker, nil
+}
+
+func (w *Worker) SetMetrics(metrics DeadLetterMetrics) {
+	w.metrics = metrics
 }
 
 func (w *Worker) Run(ctx context.Context) error {
@@ -143,11 +163,18 @@ func (w *Worker) runSession(ctx context.Context) error {
 	}
 	defer consumer.Close()
 
+	failedConsumer, failedDeliveries, err := openConsumer(connection, w.topology.failedQueue, w.config.ConsumerPrefetch)
+	if err != nil {
+		return err
+	}
+	defer failedConsumer.Close()
+
 	sessionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() { errCh <- w.publishLoop(sessionCtx, publisher) }()
 	go func() { errCh <- w.consumeLoop(sessionCtx, deliveries) }()
+	go func() { errCh <- w.consumeFailedLoop(sessionCtx, failedDeliveries) }()
 
 	connectionClosed := connection.NotifyClose(make(chan *amqp.Error, 1))
 	w.logger.Info("order timeout RabbitMQ worker connected")
@@ -371,6 +398,18 @@ func (w *Worker) consumeLoop(ctx context.Context, deliveries <-chan amqp.Deliver
 			}
 			if err := w.canceller.CancelExpiredOrder(ctx, event.EventID, event.OrderID); err != nil {
 				w.logger.Error("cancel expired order", "event_id", event.EventID, "order_id", event.OrderID, "error", err)
+				retries := extractDeathCount(delivery.Headers)
+				if retries >= defaultMaxCancelRetries {
+					w.logger.Warn("order timeout cancel reached max retries, dead-lettering to failed queue",
+						"event_id", event.EventID,
+						"order_id", event.OrderID,
+						"retries", retries,
+					)
+					if nackErr := delivery.Nack(false, false); nackErr != nil {
+						return fmt.Errorf("dead-letter order timeout event: %w", nackErr)
+					}
+					continue
+				}
 				if !waitFor(ctx, w.config.OutboxRetryDelay) {
 					return nil
 				}
@@ -385,6 +424,134 @@ func (w *Worker) consumeLoop(ctx context.Context, deliveries <-chan amqp.Deliver
 			w.logger.Info("processed order timeout event", "event_id", event.EventID, "order_id", event.OrderID)
 		}
 	}
+}
+
+func (w *Worker) consumeFailedLoop(ctx context.Context, deliveries <-chan amqp.Delivery) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case delivery, ok := <-deliveries:
+			if !ok {
+				return errors.New("order timeout failed delivery channel closed")
+			}
+			w.handleFailedDelivery(ctx, delivery)
+		}
+	}
+}
+
+func (w *Worker) handleFailedDelivery(ctx context.Context, delivery amqp.Delivery) {
+	retryCount := extractDeathCount(delivery.Headers)
+	var event Event
+	reason := "max_retries_exceeded"
+	errorDetail := "order cancel retry limit exceeded"
+	if err := json.Unmarshal(delivery.Body, &event); err != nil {
+		reason = "decode_error"
+		errorDetail = fmt.Sprintf("decode payload failed: %v", err)
+	}
+
+	dl := &model.OrderTimeoutDeadLetter{
+		MessageID:   delivery.MessageId,
+		EventID:     event.EventID,
+		OrderID:     event.OrderID,
+		UserID:      event.UserID,
+		RetryCount:  retryCount,
+		Reason:      reason,
+		Payload:     string(delivery.Body),
+		ErrorDetail: errorDetail,
+		Status:      "PENDING",
+		CreatedAt:   w.now(),
+		UpdatedAt:   w.now(),
+	}
+
+	dbErr := dao.CreateOrderTimeoutDeadLetter(ctx, w.db, dl)
+	handled := "stored"
+	if dbErr != nil {
+		handled = "fallback_logged"
+		w.logger.Error("emergency fallback: failed to persist dead letter to database",
+			"error", dbErr,
+			"message_id", delivery.MessageId,
+			"event_id", event.EventID,
+			"order_id", event.OrderID,
+			"user_id", event.UserID,
+			"payload", string(delivery.Body),
+		)
+	}
+
+	w.logger.Error("ORDER_TIMEOUT_DLQ_ALERT: dead letter received in failed queue",
+		"message_id", delivery.MessageId,
+		"event_id", event.EventID,
+		"order_id", event.OrderID,
+		"user_id", event.UserID,
+		"retry_count", retryCount,
+		"reason", reason,
+		"handled", handled,
+	)
+
+	if w.metrics != nil {
+		w.metrics.RecordOrderTimeoutDeadLetter(reason, handled)
+	}
+
+	// 严格遵守：绝不调用 Nack(requeue=true)，终态无条件调用 Ack(false) 清理队列积压，杜绝毒丸死循环
+	if err := delivery.Ack(false); err != nil {
+		w.logger.Error("acknowledge failed queue dead letter failed",
+			"message_id", delivery.MessageId,
+			"event_id", event.EventID,
+			"error", err,
+		)
+	}
+}
+
+func extractDeathCount(headers amqp.Table) int {
+	if headers == nil {
+		return 0
+	}
+	xDeath, ok := headers["x-death"]
+	if !ok || xDeath == nil {
+		if rc, ok := headers["retry_count"].(int); ok && rc > 0 {
+			return rc
+		}
+		if rc, ok := headers["retry_count"].(int64); ok && rc > 0 {
+			return int(rc)
+		}
+		return 0
+	}
+	total := 0
+	switch deaths := xDeath.(type) {
+	case []interface{}:
+		for _, item := range deaths {
+			if tbl, ok := item.(amqp.Table); ok {
+				if count, ok := tbl["count"].(int64); ok {
+					total += int(count)
+				} else if count, ok := tbl["count"].(int); ok {
+					total += count
+				}
+			} else if tbl, ok := item.(map[string]interface{}); ok {
+				if count, ok := tbl["count"].(int64); ok {
+					total += int(count)
+				} else if count, ok := tbl["count"].(int); ok {
+					total += count
+				}
+			}
+		}
+	case []amqp.Table:
+		for _, tbl := range deaths {
+			if count, ok := tbl["count"].(int64); ok {
+				total += int(count)
+			} else if count, ok := tbl["count"].(int); ok {
+				total += count
+			}
+		}
+	}
+	if total == 0 {
+		if rc, ok := headers["retry_count"].(int); ok && rc > 0 {
+			return rc
+		}
+		if rc, ok := headers["retry_count"].(int64); ok && rc > 0 {
+			return int(rc)
+		}
+	}
+	return total
 }
 
 func expirationMilliseconds(now, timeoutAt time.Time) string {

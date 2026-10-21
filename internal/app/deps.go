@@ -78,7 +78,7 @@ func InitDeps(logger *slog.Logger) (*Deps, error) {
 		inventoryStockGuard,
 		metrics.Business,
 	)
-	orderTimeoutWorker, err := ordertimeout.NewWorker(ordertimeout.Config{
+	orderTimeoutWorker, err := ordertimeout.NewWorkerWithMetrics(ordertimeout.Config{
 		URL:                cfg.RabbitMQ.URL,
 		ConnectTimeout:     cfg.RabbitMQ.ConnectTimeout,
 		ReconnectDelay:     cfg.RabbitMQ.ReconnectDelay,
@@ -86,7 +86,7 @@ func InitDeps(logger *slog.Logger) (*Deps, error) {
 		OutboxRetryDelay:   orderTimeoutConfig.OutboxRetryDelay,
 		PublishBatchSize:   orderTimeoutConfig.PublishBatchSize,
 		ConsumerPrefetch:   orderTimeoutConfig.ConsumerPrefetch,
-	}, db, orderService, logger)
+	}, db, orderService, logger, metrics.Business)
 	if err != nil {
 		return nil, fmt.Errorf("build order timeout worker: %w", err)
 	}

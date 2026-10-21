@@ -49,6 +49,13 @@ func (m *BusinessMetrics) RecordRedisInventorySync(result string) {
 	m.increment("app_redis_inventory_sync_total", map[string]string{"result": normalizeLabelValue(result)})
 }
 
+func (m *BusinessMetrics) RecordOrderTimeoutDeadLetter(reason, handled string) {
+	m.increment("app_order_timeout_dead_letter_total", map[string]string{
+		"reason":  normalizeLabelValue(reason),
+		"handled": normalizeLabelValue(handled),
+	})
+}
+
 func (m *BusinessMetrics) increment(name string, labels map[string]string) {
 	if m == nil {
 		return
