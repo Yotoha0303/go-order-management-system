@@ -1,5 +1,9 @@
 .env
-AGENTS.md
+# AI 运行态文件（不入库，AGENTS.md §5）
+/memory.md
+/record.md
+/project-progress.html
+
 .gocache
 .tmp
 tools

@@ -1,0 +1,15 @@
+# docs/adr/ — 架构决策记录 (Architecture Decision Records)
+
+> **决策锚（AGENTS.md §0.2）**：回答**「为什么这样定」**。
+> 所有突破既有模式的架构与设计变更，必须在此落盘。
+
+---
+
+## 模板要求
+
+每个 ADR 文档建议遵循以下结构：
+- **Title**: `ADR-NNN: 决策标题`
+- **Status**: `Proposed` | `Accepted` | `Deprecated` | `Superseded`
+- **Context**: 遇到了什么问题，当前的瓶颈与约束是什么？
+- **Decision**: 做出了什么架构决策，技术选型是什么？
+- **Consequences**: 该决策带来的收益、代价与权衡（Trade-offs）。
