@@ -35,6 +35,7 @@ func SetupRouters(
 	}
 
 	r.Use(
+		middleware.CORSMiddleware(),
 		middleware.RequestID(),
 		middleware.TraceContext(),
 		middleware.HTTPMetrics(metrics.HTTP),
