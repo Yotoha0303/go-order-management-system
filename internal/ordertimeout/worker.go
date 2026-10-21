@@ -25,6 +25,9 @@ const (
 	delayRoutingKey  = "delay"
 	cancelRoutingKey = "cancel"
 	failedRoutingKey = "failed"
+
+	defaultMaxOutboxAttempts = 10
+	maxOutboxBackoffDelay    = 10 * time.Minute
 )
 
 type topology struct {
@@ -226,21 +229,75 @@ func (w *Worker) publishLoop(ctx context.Context, channel *amqp.Channel) error {
 	}
 }
 
+func calculateExponentialBackoff(baseDelay time.Duration, attempts int, maxDelay time.Duration) time.Duration {
+	if baseDelay <= 0 {
+		return 0
+	}
+	if maxDelay <= 0 {
+		maxDelay = maxOutboxBackoffDelay
+	}
+	if attempts <= 1 {
+		if baseDelay > maxDelay {
+			return maxDelay
+		}
+		return baseDelay
+	}
+	shift := attempts - 1
+	if shift >= 62 {
+		return maxDelay
+	}
+	multiplier := int64(1) << shift
+	if multiplier > int64(maxDelay/baseDelay) {
+		return maxDelay
+	}
+	delay := baseDelay * time.Duration(multiplier)
+	if delay > maxDelay || delay <= 0 {
+		return maxDelay
+	}
+	return delay
+}
+
 func (w *Worker) publishBatch(ctx context.Context, channel *amqp.Channel) error {
-	events, err := dao.ListPendingOrderTimeoutOutbox(ctx, w.db, w.now(), w.config.PublishBatchSize)
+	leaseDuration := w.config.OutboxRetryDelay
+	if leaseDuration <= 0 {
+		leaseDuration = 30 * time.Second
+	}
+
+	events, err := dao.ClaimPendingOrderTimeoutOutbox(
+		ctx,
+		w.db,
+		w.now(),
+		w.config.PublishBatchSize,
+		leaseDuration,
+		defaultMaxOutboxAttempts,
+	)
 	if err != nil {
-		w.logger.Error("list order timeout outbox", "error", err)
+		w.logger.Error("claim order timeout outbox", "error", err)
 		return nil
 	}
 	for _, outbox := range events {
 		if err := w.publishEvent(ctx, channel, outbox); err != nil {
+			backoffDelay := calculateExponentialBackoff(
+				w.config.OutboxRetryDelay,
+				outbox.Attempts,
+				maxOutboxBackoffDelay,
+			)
+			nextAttemptAt := w.now().Add(backoffDelay)
 			_ = dao.MarkOrderTimeoutOutboxFailed(
 				context.WithoutCancel(ctx),
 				w.db,
 				outbox.EventID,
 				truncateError(err),
-				w.now().Add(w.config.OutboxRetryDelay),
+				nextAttemptAt,
 			)
+			if outbox.Attempts >= defaultMaxOutboxAttempts {
+				w.logger.Error("order timeout outbox reached max attempts",
+					"event_id", outbox.EventID,
+					"order_id", outbox.OrderID,
+					"attempts", outbox.Attempts,
+					"error", err,
+				)
+			}
 			return err
 		}
 		if err := dao.MarkOrderTimeoutOutboxPublished(ctx, w.db, outbox.EventID, w.now()); err != nil {
@@ -251,6 +308,9 @@ func (w *Worker) publishBatch(ctx context.Context, channel *amqp.Channel) error 
 }
 
 func (w *Worker) publishEvent(ctx context.Context, channel *amqp.Channel, outbox model.OrderTimeoutOutbox) error {
+	if channel == nil {
+		return errors.New("publish order timeout event: channel is nil")
+	}
 	event := Event{
 		EventID:   outbox.EventID,
 		OrderID:   outbox.OrderID,
