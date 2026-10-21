@@ -1,2 +1,23 @@
-deploy.sh text eol=lf
+# Line endings normalization
+* text=auto eol=lf
 *.sh text eol=lf
+*.ps1 text eol=lf
+*.bat text eol=crlf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.sql text eol=lf
+
+# Explicit file line endings
+deploy.sh text eol=lf
+
+# GitHub Linguist overrides: restore Go as the repository primary language
+# Exclude frontend demo/UI artifacts from language statistics
+fronted/** linguist-vendored=true
+fronted/** linguist-detectable=false
+
+# Exclude documentation and binary assets from language calculation
+docs/** linguist-documentation=true
+*.png binary
+*.svg text
