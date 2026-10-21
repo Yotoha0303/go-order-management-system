@@ -48,6 +48,7 @@ type InventoryReconcileConfig struct {
 	Enabled  bool          `yaml:"enabled"`
 	Interval time.Duration `yaml:"interval"`
 	Timeout  time.Duration `yaml:"timeout"`
+	AutoFix  bool          `yaml:"autoFix"`
 }
 
 type JWTConfig struct {
@@ -176,6 +177,13 @@ func applyInventoryReconcileEnvOverrides(cfg *InventoryReconcileConfig) error {
 			return fmt.Errorf("invalid INVENTORY_RECONCILE_TIMEOUT: %w", err)
 		}
 		cfg.Timeout = timeout
+	}
+	if v := os.Getenv("INVENTORY_RECONCILE_AUTO_FIX"); v != "" {
+		autoFix, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("invalid INVENTORY_RECONCILE_AUTO_FIX: %w", err)
+		}
+		cfg.AutoFix = autoFix
 	}
 	return nil
 }

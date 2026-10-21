@@ -15,7 +15,7 @@
 | **GAP-003** | P2 | 延迟投递 | Transactional Outbox 轮询缺乏并发锁，多实例部署下消息重复发布 | [#4](https://github.com/Yotoha0303/go-order-management-system/issues/4) | CLOSED | `sre-operator` / `backend-dev` |
 | **GAP-004** | P2 | 队列拓扑 | RabbitMQ 单消息 TTL 存在队头阻塞（Head-of-Line Blocking）隐患 | [#5](https://github.com/Yotoha0303/go-order-management-system/issues/5) | CLOSED | `sre-operator` / `system-architect` |
 | **GAP-005** | P1 | 最终一致性 | 订单超时取消在异常重启或网络故障时导致 Redis 库存永久丢失回补 | [#6](https://github.com/Yotoha0303/go-order-management-system/issues/6) | CLOSED | `backend-dev` / `qa-validator` |
-| **GAP-006** | P2 | 数据模型 | 库存模型缺少锁定库存（`locked_quantity`）设计，且定时对账 Worker 缺乏自愈机制 | [#7](https://github.com/Yotoha0303/go-order-management-system/issues/7) | OPEN | `data-engineer` / `backend-dev` |
+| **GAP-006** | P2 | 数据模型 | 库存模型缺少锁定库存（`locked_quantity`）设计，且定时对账 Worker 缺乏自愈机制 | [#7](https://github.com/Yotoha0303/go-order-management-system/issues/7) | CLOSED | `data-engineer` / `backend-dev` |
 | **GAP-007** | **P0** | 库存并发 | `AddInventory` 补货使用绝对值覆盖写入 Redis，并发入库存在库存回退竞态 Bug | [#8](https://github.com/Yotoha0303/go-order-management-system/issues/8) | CLOSED | `backend-dev` / `data-engineer` |
 | **GAP-008** | P1 | 队列拓扑 | RabbitMQ 死信失败队列 `order.timeout.failed` 缺乏消费者与告警，形成消息堆积黑洞 | [#9](https://github.com/Yotoha0303/go-order-management-system/issues/9) | CLOSED | `sre-operator` / `backend-dev` |
 | **GAP-009** | P2 | 业务权限 | 缺少管理员全局订单列表与审计视图，管理后台无法查询与干预全平台订单 | [#10](https://github.com/Yotoha0303/go-order-management-system/issues/10) | OPEN | `backend-dev` / `sec-auditor` |
@@ -82,6 +82,12 @@
   1. 数据表增加 `locked_quantity` 字段并设计状态迁移；
   2. 取消订单回补库存显式按 `product_id ASC` 加锁；
   3. 对账 Worker 增加可配置的自动修正或告警推送。
+- **解决闭环 (2026-10-21)**：
+  - 架构与数据模型锁定：落盘 [ADR-003](file:///d:/MyDocuments/ai-collaboration-framework/go-order-management-system/docs/adr/003-inventory-locked-quantity-and-reconcile-autofix.md)，定义总实物库存守恒定律（$TotalPhysicalStock = stock\_quantity + locked\_quantity$）与加锁偏序 DAG 定理；
+  - 数据库迁移：落盘 `migrations/00016_add_locked_quantity_to_product_inventories.sql`，增加 `locked_quantity BIGINT NOT NULL DEFAULT 0` 及 `CHECK(locked_quantity >= 0)` 物理非负约束；
+  - 三态流转与死锁消除：在 `inventory_dao.go` 实现 `ReserveInventory`、`ReleaseLockedInventory`、`ConsumeLockedInventory` 原子 CAS；在 `order_service.go` 的 `CreateOrder`、`cancelPendingOrder`、`PayOrder` 统一按 `product_id ASC` 偏序遍历加锁，彻底杜绝哲学家就餐环路死锁；
+  - 对账自愈：在 `inventoryreconcile/worker.go` 引入 `AutoFix` 模式，自动纠偏 Redis 缓存并暴露 Prometheus 指标；
+  - 验证与审计：通过 `qa-validator` 单测/竞态矩阵、`falsifier` 4 组变异证伪攻击（偏序反转、守恒破解、CAS 条件移除、写回注释均精准红灯拦截），通过 `gate-auditor` 转段门禁裁决。见 `docs/changes/008-fix-gap-006-inventory-locked-quantity.md`。
 
 ### GAP-007 · 并发补货绝对值覆盖写导致库存回退修复
 - **现状**：`AddInventory` 在 DB 成功后调用 `g.redisClient.Set(key, afterQuantity, 0)` 绝对值覆盖。

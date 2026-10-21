@@ -56,6 +56,14 @@ func (m *BusinessMetrics) RecordOrderTimeoutDeadLetter(reason, handled string) {
 	})
 }
 
+func (m *BusinessMetrics) RecordInventoryReconcileDiff(status string) {
+	m.increment("app_inventory_reconcile_diff_total", map[string]string{"status": normalizeLabelValue(status)})
+}
+
+func (m *BusinessMetrics) RecordInventoryReconcileAutoFix(result string) {
+	m.increment("app_inventory_reconcile_autofix_total", map[string]string{"result": normalizeLabelValue(result)})
+}
+
 func (m *BusinessMetrics) increment(name string, labels map[string]string) {
 	if m == nil {
 		return

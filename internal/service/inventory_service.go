@@ -67,7 +67,7 @@ func (p *InventoryService) InitInventory(ctx context.Context, req *request.InitI
 		return err
 	}
 
-	p.setInventoryStock(ctx, product.ID, *req.StockQuantity)
+	p.SetInventoryStock(ctx, product.ID, *req.StockQuantity)
 	return nil
 }
 
@@ -206,11 +206,26 @@ func (p *InventoryService) ReconcileRedisInventoryStock(ctx context.Context) (In
 	return report, nil
 }
 
-func (p *InventoryService) setInventoryStock(ctx context.Context, productID int64, quantity int64) {
+// AutoFixRedisInventoryStock 批量自愈差异项，将 MySQL 权威库存强制回写至 Redis
+func (p *InventoryService) AutoFixRedisInventoryStock(ctx context.Context, items []InventoryRedisReconcileItem) error {
+	if p == nil || p.stockWriter == nil {
+		return ErrInventoryStockReconcileUnavailable
+	}
+	for _, item := range items {
+		p.stockWriter.SetInventoryStock(context.WithoutCancel(ctx), item.ProductID, item.MySQLQuantity)
+	}
+	return nil
+}
+
+func (p *InventoryService) SetInventoryStock(ctx context.Context, productID int64, quantity int64) {
 	if p == nil || p.stockWriter == nil {
 		return
 	}
 	p.stockWriter.SetInventoryStock(context.WithoutCancel(ctx), productID, quantity)
+}
+
+func (p *InventoryService) setInventoryStock(ctx context.Context, productID int64, quantity int64) {
+	p.SetInventoryStock(ctx, productID, quantity)
 }
 
 func (p *InventoryService) incrInventoryStock(ctx context.Context, productID int64, delta int64, fallbackQuantity int64) {

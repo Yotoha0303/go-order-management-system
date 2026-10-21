@@ -61,10 +61,11 @@ func InitDeps(logger *slog.Logger) (*Deps, error) {
 	inventoryService := service.NewInventoryServiceWithStockWriter(db, inventoryStockGuard)
 	var inventoryWorker *inventoryreconcile.Worker
 	if cfg.InventoryReconcile.Enabled {
-		inventoryWorker, err = inventoryreconcile.NewWorker(inventoryreconcile.Config{
+		inventoryWorker, err = inventoryreconcile.NewWorkerWithStockWriterAndMetrics(inventoryreconcile.Config{
 			Interval: cfg.InventoryReconcile.Interval,
 			Timeout:  cfg.InventoryReconcile.Timeout,
-		}, inventoryService, logger)
+			AutoFix:  cfg.InventoryReconcile.AutoFix,
+		}, inventoryService, inventoryStockGuard, metrics.Business, logger)
 		if err != nil {
 			return nil, fmt.Errorf("build inventory reconcile worker: %w", err)
 		}

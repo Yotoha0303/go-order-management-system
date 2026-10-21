@@ -46,6 +46,12 @@ func ListOrderItemsByOrderID(ctx context.Context, db *gorm.DB, orderID int64) ([
 	return items, db.WithContext(ctx).Model(&model.OrderItem{}).Where("order_id = ?", orderID).Order("id ASC").Find(&items).Error
 }
 
+// ListOrderItemsByOrderIDForInventory 按照 product_id ASC 严格升序查询订单明细，防止跨商品事务死锁
+func ListOrderItemsByOrderIDForInventory(ctx context.Context, db *gorm.DB, orderID int64) ([]*model.OrderItem, error) {
+	var items []*model.OrderItem
+	return items, db.WithContext(ctx).Model(&model.OrderItem{}).Where("order_id = ?", orderID).Order("product_id ASC").Find(&items).Error
+}
+
 func PatchOrderStatus(ctx context.Context, db *gorm.DB, userID, orderID int64, fromStatus int8, toStatus int8, timeField string) (int64, error) {
 	result := db.WithContext(ctx).Model(&model.Order{}).Where("user_id = ? AND id = ? AND status = ?", userID, orderID, fromStatus).Updates(
 		map[string]interface{}{

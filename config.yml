@@ -23,6 +23,7 @@ inventoryReconcile:
   enabled: true
   interval: 5m
   timeout: 3s
+  autoFix: true
 
 rabbitmq:
   url: amqp://order_app:order_dev_password@127.0.0.1:5672/

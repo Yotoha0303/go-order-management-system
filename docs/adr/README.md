@@ -22,5 +22,6 @@
 | :--- | :--- | :---: | :--- | :--- |
 | [ADR-001](001-high-concurrency-distributed-consistency-inventory-architecture.md) | 高并发低延迟与分布式最终一致性库存架构设计 | `Accepted` | GAP-001, GAP-002, GAP-005, GAP-007 | `system-architect` |
 | [ADR-002](002-rabbitmq-ladder-delay-queue-topology.md) | RabbitMQ 分级阶梯延时队列消除队头阻塞架构设计 | `Accepted` | GAP-004, GAP-008, GAP-003 | `system-architect` |
+| [ADR-003](003-inventory-locked-quantity-and-reconcile-autofix.md) | 健全库存三态数据模型、全局防死锁偏序加锁与缓存对账自愈架构设计 | `Accepted` | GAP-006 | `data-engineer` |
 
 

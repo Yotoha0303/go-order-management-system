@@ -689,6 +689,9 @@ func TestPayOrder_FromPendingToPaid_Success(t *testing.T) {
 	if invBeforePay.StockQuantity != expectedStockAfterCreate {
 		t.Fatalf("expected stock quantity %d after create order, got %d", expectedStockAfterCreate, invBeforePay.StockQuantity)
 	}
+	if invBeforePay.LockedQuantity != orderedQuantity {
+		t.Fatalf("expected locked quantity %d after create order, got %d", orderedQuantity, invBeforePay.LockedQuantity)
+	}
 
 	var stockLogCountBeforePay int64
 	if err := testDB.Model(&model.StockLog{}).Where("product_id = ? AND biz_id = ? ", p.ID, order.ID).Count(&stockLogCountBeforePay).Error; err != nil {
@@ -723,6 +726,9 @@ func TestPayOrder_FromPendingToPaid_Success(t *testing.T) {
 
 	if invAfterPay.StockQuantity != expectedStockAfterCreate {
 		t.Fatalf("expected stock unchanged after pay:%d,got %d", expectedStockAfterCreate, invAfterPay.StockQuantity)
+	}
+	if invAfterPay.LockedQuantity != 0 {
+		t.Fatalf("expected locked quantity 0 after pay, got %d", invAfterPay.LockedQuantity)
 	}
 
 	var stockLogCountAfterPay int64

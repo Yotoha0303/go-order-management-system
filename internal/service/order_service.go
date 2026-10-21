@@ -159,12 +159,11 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 				return ErrInsufficientStock
 			}
 
-			rows, err := dao.DeductInventory(ctx, tx, itemReq.ProductID, itemReq.Quantity)
-			if err != nil {
+			if err := dao.ReserveInventory(ctx, tx, itemReq.ProductID, itemReq.Quantity); err != nil {
+				if errors.Is(err, dao.ErrReserveInventoryFailed) {
+					return ErrInsufficientStock
+				}
 				return err
-			}
-			if rows == 0 {
-				return ErrInsufficientStock
 			}
 
 			subtotalFen := product.PriceFen * itemReq.Quantity
@@ -520,12 +519,14 @@ func cancelPendingOrder(
 		return false, nil
 	}
 
-	items, err := dao.ListOrderItemsByOrderID(ctx, tx, order.ID)
+	items, err := dao.ListOrderItemsByOrderIDForInventory(ctx, tx, order.ID)
 	if err != nil {
 		return false, err
 	}
 
-	for _, item := range items {
+	sortedItems := aggregateAndSortOrderItems(items)
+
+	for _, item := range sortedItems {
 		inventory, err := dao.GetInventoryByProductIDForUpdate(ctx, tx, item.ProductID)
 		if err != nil {
 			return false, err
@@ -534,7 +535,7 @@ func cancelPendingOrder(
 		before := inventory.StockQuantity
 		after := before + item.Quantity
 
-		if err := dao.UpdateInventoryStockQuantity(ctx, tx, item.ProductID, after); err != nil {
+		if err := dao.ReleaseLockedInventory(ctx, tx, item.ProductID, item.Quantity); err != nil {
 			return false, err
 		}
 
@@ -553,6 +554,35 @@ func cancelPendingOrder(
 		}
 	}
 	return true, nil
+}
+
+func aggregateAndSortOrderItems(items []*model.OrderItem) []*model.OrderItem {
+	qtyMap := make(map[int64]int64, len(items))
+	itemMap := make(map[int64]*model.OrderItem, len(items))
+	for _, it := range items {
+		if it == nil || it.ProductID <= 0 {
+			continue
+		}
+		qtyMap[it.ProductID] += it.Quantity
+		itemMap[it.ProductID] = it
+	}
+	sorted := make([]*model.OrderItem, 0, len(qtyMap))
+	for pID, qty := range qtyMap {
+		base := itemMap[pID]
+		sorted = append(sorted, &model.OrderItem{
+			ID:              base.ID,
+			OrderID:         base.OrderID,
+			ProductID:       pID,
+			ProductName:     base.ProductName,
+			ProductPriceFen: base.ProductPriceFen,
+			Quantity:        qty,
+			SubtotalFen:     base.ProductPriceFen * qty,
+		})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].ProductID < sorted[j].ProductID
+	})
+	return sorted
 }
 
 func (p *OrderService) PayOrder(ctx context.Context, userID, orderID int64) error {
@@ -585,17 +615,34 @@ func (p *OrderService) PayOrder(ctx context.Context, userID, orderID int64) erro
 		return err
 	}
 
-	row, err := dao.PatchOrderStatus(ctx, p.db, userID, order.ID, model.OrderStatusPending, model.OrderStatusPaid, "paid_at")
+	err = p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		row, err := dao.PatchOrderStatus(ctx, tx, userID, order.ID, model.OrderStatusPending, model.OrderStatusPaid, "paid_at")
+		if err != nil {
+			return err
+		}
+
+		if row == 0 {
+			return ErrOrderPayFailed
+		}
+
+		items, err := dao.ListOrderItemsByOrderIDForInventory(ctx, tx, order.ID)
+		if err != nil {
+			return err
+		}
+
+		sortedItems := aggregateAndSortOrderItems(items)
+		for _, item := range sortedItems {
+			if err := dao.ConsumeLockedInventory(ctx, tx, item.ProductID, item.Quantity); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		p.recordOrderTransition("pay", classifyOrderTransitionError(err))
 		return err
 	}
 
-	if row == 0 {
-		err = ErrOrderPayFailed
-		p.recordOrderTransition("pay", classifyOrderTransitionError(err))
-		return err
-	}
 	p.confirmPreDeductedInventory(context.WithoutCancel(ctx), orderID)
 	p.recordOrderTransition("pay", "success")
 	return nil
