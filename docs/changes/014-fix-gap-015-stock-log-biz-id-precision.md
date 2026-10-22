@@ -7,8 +7,11 @@
 - **关联缺陷**：GAP-015（**待 `ssot-scribe` 登记**，本角色不改 `docs/GAP台账.md`）；P2，GAP-012 同类缺陷的收口
 - **关联 Issue**：#14
 - **关联 ADR**：无（JSON 序列化契约修复，不改变架构决策）
-- **状态**：代码与测试完成；**门禁非全绿**——`go test ./...` 被 `qa-validator` 所属用例
-  `internal/model/qa_json_surface_test.go:102` 阻断（该用例**刻意钉住修复前的形态**，见 §7）。
+- **状态**：代码与测试完成；**该项自身不再有红点**——原本被
+  `internal/model/qa_json_surface_test.go:102` 阻断的问题，已由 `qa-validator` 翻转断言解除，
+  实测见 §7.7（`--- PASS: TestQAStockLogBizIDShapePinsTheOpenContract`）。
+  ⚠️ 但这**不等于**「CI 已绿」：PR #17 的 `Test, Vet, Validate, Build` 仍 `fail`，
+  失败点为 `TestRebuildRedisInventoryStock_Success`（与本变更无关），系统性归因见台账 `GAP-020`。
 
 ---
 
@@ -132,7 +135,7 @@ exit=1
 | # | 命令 | exit | 实测结论 |
 | :- | :-- | :--: | :-- |
 | G1 | `go vet ./...` | **0** | 无输出 |
-| G2 | `go test -count=1 ./...` | **1** | **除 `internal/model` 外全绿**；唯一失败见下 |
+| G2 | `go test -count=1 ./...` | **1** | **除 `internal/model` 外全绿**；唯一失败见下（**该红点已于 §7.7 解除**） |
 | G3 | `go test -count=1 -race ./...` | **1** | 同上，**无 DATA RACE** |
 | G4 | `golangci-lint run ./...` | **0** | `0 issues.` |
 | G5 | `goose -dir migrations validate` | **0** | 无输出 |
@@ -192,6 +195,9 @@ if shape["biz_id"] != "non-string" {
 `shape["biz_id"] == "string"`（并保留 nil 分支的 `null` 断言），或由总控裁定删除。
 **在那之前 `go test ./...` / `-race` 不可能全绿**——这是三项修复之外唯一的红点。
 
+> **后续（`2026-10-22`）**：上述阻塞**已解除**——`qa-validator` 已翻转该断言，复跑 PASS，见 §7.7。
+> §7.6 保留原文是因为它记录的是**当时**的事实（历史快照不改写），不是当前状态。
+
 ### 7.2 本机 vitest 的临时 config（已删除）
 
 `fronted/vitest.local.config.ts` 在**接手时已存在且未被 git 跟踪**（`git status` 显示 `??`），
@@ -223,6 +229,33 @@ ok  	go-order-management-system/internal/model	0.689s
 但其**性质**不变：本节只证明「该用例不再阻塞」，**不等于** `GAP-015` 可判 `CLOSED`——
 按台账状态枚举，`CLOSED` 还需**门禁裁决**放行，而本轮 `gate-auditor` 裁决为阻断。
 仍有效的若干净证据：§6.1（新用例全 PASS）、§6.2（负向证伪）、§7.2（`tsc --noEmit` 空转订正）。
+
+### 7.8 后续：PR #17 的 CI 实跑结果（首次端到端执行本批改动）
+
+PR [#17](https://github.com/Yotoha0303/go-order-management-system/pull/17) 的 CI run 为 `39729484909`
+（`event=pull_request`，`headSha=3584d1f`，与本批提交的 HEAD 一致），结果：
+
+| 作业 | 结论 | 耗时 |
+| --- | --- | --- |
+| `Frontend (tsc, eslint, vitest browser, build)` | **pass** | 1m0s |
+| `Test, Vet, Validate, Build` | **fail** | 2m59s |
+
+**Go 作业的逐包结果（实测 `gh run view 39729484909 --log-failed`）**：18 个包中 **17 个 `ok`**，
+仅 `FAIL go-order-management-system/internal/service`。失败点：
+
+```text
+--- FAIL: TestRebuildRedisInventoryStock_Success (0.11s)
+    inventory_service_test.go:203: expected inventories ordered by product_id asc, got [0xc0003accd0 0xc0003acd20]
+```
+
+**三点必须说清（否则会被误读成本变更的回归）**：
+
+1. **`internal/model` 为 `ok`**——即本变更与 `qa-validator` 的钉住用例**在 CI 上也已通过**，不只是本机；
+2. **失败测试与本变更无关**：`TestRebuildRedisInventoryStock_Success` 属库存重建排序断言，本变更只动了 `StockLog.BizID` 的 JSON tag；
+3. **`GOFLAGS=-mod=readonly` 不拦新增测试文件**：该标志约束的是 `go.mod` / `go.sum`，与是否有未跟踪的 `_test.go` 无关——故「新用例在 CI 里被静默忽略」这一担心**在本次不成立**（`internal/model` 的 `ok` 即为证据）。
+
+**结论**：本变更在**本机与 CI 两侧**均无红点；但**整条 CI 仍未绿**，故本项**不判 `CLOSED`**，
+系统性归因见台账 `GAP-020`（`main` 连红 15 次，`CLOSED` 结论从未经 CI 验证）。
 
 ## 8. 同批的两项 CI 修复（P1）
 
@@ -309,7 +342,7 @@ ok  	go-order-management-system/internal/model	0.689s
 | 项 | 归属 | 说明 |
 | --- | --- | --- |
 | `docs/GAP台账.md` 登记 **GAP-015** | `ssot-scribe` | P2：`StockLog.BizID` 裸数字精度截断（GAP-012 同类收口）。本角色**未改台账** |
-| `qa_json_surface_test.go:97-105` 断言翻转 | `qa-validator` | **阻塞全绿**，见 §7.1。不得由实现方代改 |
+| `qa_json_surface_test.go:97-105` 断言翻转 | `qa-validator` | **已解除**：断言已翻转为 `string` + nil→`null`，实测 PASS，见 §7.7。不得由实现方代改 |
 | `docs/changes/011` 的字段影响表 | 已完成记录的**作者** | 011 §4 的影响面表只列了 `Order.ID` / `OrderItem.OrderID`，未列 `StockLog.BizID`；011 记录的结论本身没错（当时范围如此），但读者可能误以为「Snowflake 载体只有两处」。建议由 011 的作者补一句指针，**本角色不改 011** |
 | 前端 `stock-logs.tsx:120` | 无需改动 | 模板字符串对 `string` 天然成立；`types.ts` 类型收紧后 `npx tsc -b` 实测 exit 0（原记的 `--noEmit` 为空转，已订正见 §7.2） |
 | 数据库迁移 | 无 | 仅 JSON tag 变化，列类型 / 索引 / 可空性不变 |

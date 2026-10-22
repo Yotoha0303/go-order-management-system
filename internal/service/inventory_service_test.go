@@ -6,6 +6,7 @@ import (
 	"go-order-management-system/internal/model"
 	"go-order-management-system/internal/request"
 	"go-order-management-system/internal/service"
+	"slices"
 	"testing"
 
 	"gorm.io/gorm"
@@ -184,6 +185,9 @@ func TestRebuildRedisInventoryStock_Success(t *testing.T) {
 	testDB := setupTestDB(t)
 	writer := &fakeInventoryStockWriter{rebuildCount: 2}
 	inventorySvc := service.NewInventoryServiceWithStockWriter(testDB, writer)
+	// Seeded B first, A second: product_b.id < product_a.id because both are
+	// auto-increment. That is why the ascending contract below is observably
+	// different from insertion order.
 	productB := seedProduct(t, testDB, "redis-rebuild-product-b", 100, model.ProductStatusOnSale)
 	productA := seedProduct(t, testDB, "redis-rebuild-product-a", 100, model.ProductStatusOnSale)
 	seedInventory(t, testDB, productB.ID, 20)
@@ -199,8 +203,28 @@ func TestRebuildRedisInventoryStock_Success(t *testing.T) {
 	if len(writer.rebuildInventories) != 2 {
 		t.Fatalf("expected 2 inventories passed to rebuilder, got %d", len(writer.rebuildInventories))
 	}
-	if writer.rebuildInventories[0].ProductID != productA.ID || writer.rebuildInventories[1].ProductID != productB.ID {
-		t.Fatalf("expected inventories ordered by product_id asc, got %+v", writer.rebuildInventories)
+
+	// dao.ListAllInventories orders by product_id ASC (ADR-003 lock ordering),
+	// so the rebuilder must receive the ascending sequence. Build a comparable
+	// id slice: printing []*model.Inventory yields only heap addresses, which
+	// made the previous failure message carry no information at all.
+	gotIDs := make([]int64, 0, len(writer.rebuildInventories))
+	for i, inventory := range writer.rebuildInventories {
+		if inventory == nil {
+			t.Fatalf("rebuilder received a nil inventory at index %d", i)
+		}
+		gotIDs = append(gotIDs, inventory.ProductID)
+	}
+	wantIDs := []int64{productB.ID, productA.ID}
+	slices.Sort(wantIDs) // the contract is "ascending by product_id", not seed order
+
+	if !slices.Equal(gotIDs, wantIDs) {
+		t.Fatalf("expected inventories passed to rebuilder ordered by product_id asc: got ids %v, want %v", gotIDs, wantIDs)
+	}
+	// Negative half (D3): strictly ascending, so an unordered-but-same-set
+	// result cannot pass on a coincidence of the two fixture ids.
+	if writer.rebuildInventories[0].ProductID >= writer.rebuildInventories[1].ProductID {
+		t.Fatalf("rebuild sequence is not strictly ascending by product_id: %v", gotIDs)
 	}
 }
 

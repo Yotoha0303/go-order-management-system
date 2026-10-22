@@ -27,6 +27,21 @@ func newOrderService(t *testing.T) (*gorm.DB, *service.OrderService) {
 	return testDB, service.NewOrderService(testDB)
 }
 
+// orderIDs renders the ids of an order slice for failure messages. Printing
+// []*model.Order with %+v only yields heap addresses, so a failing pagination or
+// isolation assertion used to say nothing about which orders came back.
+func orderIDs(orders []*model.Order) []int64 {
+	ids := make([]int64, 0, len(orders))
+	for _, order := range orders {
+		if order == nil {
+			ids = append(ids, -1)
+			continue
+		}
+		ids = append(ids, order.ID)
+	}
+	return ids
+}
+
 type fakeInventoryPreDeductor struct {
 	applied      bool
 	insufficient bool
@@ -596,7 +611,7 @@ func TestOrdersAreIsolatedByUserAndIdempotencyKey(t *testing.T) {
 		t.Fatalf("list first user orders: %v", err)
 	}
 	if len(orders) != 1 || orders[0].ID != first.ID {
-		t.Fatalf("expected only first user's order, got %+v", orders)
+		t.Fatalf("expected only first user's order %d, got ids %v", first.ID, orderIDs(orders))
 	}
 	if total != 1 {
 		t.Fatalf("expected first user's total=1, got %d", total)
@@ -614,7 +629,7 @@ func TestListOrders_PaginatesNewestFirst(t *testing.T) {
 		t.Fatalf("list first page: %v", err)
 	}
 	if len(firstPage) != 2 || firstPage[0].ID != third.ID || firstPage[1].ID != second.ID {
-		t.Fatalf("unexpected first page: %+v", firstPage)
+		t.Fatalf("expected first page ids [%d %d] (newest first), got %v", third.ID, second.ID, orderIDs(firstPage))
 	}
 	if firstTotal != 3 {
 		t.Fatalf("expected first page total=3, got %d", firstTotal)
@@ -625,7 +640,7 @@ func TestListOrders_PaginatesNewestFirst(t *testing.T) {
 		t.Fatalf("list second page: %v", err)
 	}
 	if len(secondPage) != 1 || secondPage[0].ID != first.ID {
-		t.Fatalf("unexpected second page: %+v", secondPage)
+		t.Fatalf("expected second page ids [%d], got %v", first.ID, orderIDs(secondPage))
 	}
 	if secondTotal != 3 {
 		t.Fatalf("expected second page total=3, got %d", secondTotal)
@@ -1094,7 +1109,7 @@ func TestFinishedOrder_UnableCancel_ReturnsError(t *testing.T) {
 
 	err := orderSvc.CancelOrder(context.Background(), testUserID, order.ID)
 	if !errors.Is(err, service.ErrOrderAlreadyFinished) {
-		t.Fatalf("expected order cancel failed,got %d", err)
+		t.Fatalf("expected order cancel failed, got %v", err)
 	}
 
 	var got model.Order
@@ -1103,7 +1118,7 @@ func TestFinishedOrder_UnableCancel_ReturnsError(t *testing.T) {
 	}
 
 	if got.Status == model.OrderStatusCancelled {
-		t.Fatalf("expected order status cancelled,got %d", got.Status)
+		t.Fatalf("expected a finished order to stay out of cancelled state, got status=%d", got.Status)
 	}
 
 	if got.CancelledAt != nil {
