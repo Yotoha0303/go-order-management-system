@@ -8,6 +8,12 @@
 
 ## 质量缺口登记表
 
+> **状态枚举（唯一取值，无隐含约定）**：
+> - **`CLOSED`** —— 缺口**已解除**：DoD 全部满足，且已过独立测试 / 证伪 / 门禁裁决（细则见下方「缺口细则与完成准则」）。
+> - **`IN_PROGRESS`** —— 缺口**未解除**：已登记并指派、正在修复，或其修复尚未通过门禁裁决。
+>
+> 「**活跃 GAP**」= 状态**非 `CLOSED`** 的条目（`AGENTS.md` §4 的活跃计数按此口径统计）。
+
 | 编号 | 严重度 | 模块 | 核心问题简述 | 对应 Issue | 状态 | 责任角色 |
 | :--- | :---: | :--- | :--- | :---: | :---: | :--- |
 | **GAP-001** | P1 | 订单/库存 | Redis Lua 原子预扣位于 MySQL 事务内部，未能前置拦截热点且引发长事务与双重扣减 | [#2](https://github.com/Yotoha0303/go-order-management-system/issues/2) | CLOSED | `backend-dev` / `system-architect` |
@@ -21,6 +27,14 @@
 | **GAP-009** | P2 | 业务权限 | 缺少管理员全局订单列表与审计视图，管理后台无法查询与干预全平台订单 | [#10](https://github.com/Yotoha0303/go-order-management-system/issues/10) | CLOSED | `backend-dev` / `sec-auditor` |
 | **GAP-010** | P2 | 缓存安全 | 商品详情缓存查询缺乏防穿透（空值缓存/布隆）设计，非法 ID 可打爆底层 MySQL | [#11](https://github.com/Yotoha0303/go-order-management-system/issues/11) | CLOSED | `backend-dev` / `sec-auditor` |
 | **GAP-011** | P1 | 测试架构 | 修复测试套件中并发幂等的错误断言，消除 `t.Skip` 导致的本地开发虚假全绿 | [#12](https://github.com/Yotoha0303/go-order-management-system/issues/12) | CLOSED | `qa-validator` / `backend-dev` |
+| **GAP-012** | P1 | 订单/接口契约 | 订单主键为 63 位 Snowflake 大整数，JSON 以原生数字输出，前端 `JSON.parse` 精度截断导致详情/支付/完成/取消全部 404 | [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14) | IN_PROGRESS | `backend-dev` / `frontend-dev` |
+| **GAP-013** | P1 | 订单/前端状态 | 创建订单表单行以数组 index 作 key 致 Radix Select 状态残留；且失败后 `pendingSubmission` 未清空，幂等 Key 跨提交复用；缺显式重置入口 | [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14) | IN_PROGRESS | `frontend-dev` |
+| **GAP-014** | P1 | 配置/运行 | 云端 Redis 未生效：`RedisConfig` 无 password/TLS 字段，`pkg/redis` 仅支持明文 TCP，云托管 `rediss://` 无法握手，架构首道预扣防线与商品缓存被静默旁路 | [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14) | IN_PROGRESS | `backend-dev` / `sre-operator` |
+| **GAP-015** | P2 | 数据/接口契约 | `StockLog.BizID` 承载订单 Snowflake 主键（`order_service.go:188,557` 赋 `&order.ID`）却以 JSON 裸数字输出（`stock_log.go:20`），管理员库存流水页 `#{log.biz_id}` 显示被截断的订单号——GAP-012 的同类未收口面 | [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14) | IN_PROGRESS | `backend-dev` / `frontend-dev` |
+| **GAP-016** | P1 | CI/门禁 | `ci.yml:22` 的 `MYSQL_TEST_DATABASE` 含连字符，被 `test_helper_test.go:95` 的 `^[a-zA-Z0-9_]+$` 拒绝（`:101` `t.Fatalf`）⇒ CI 上 `internal/service` 集成用例必然全红；本机 `RUN_MYSQL_TEST` 未设时同类用例全部 SKIP，造成「虚假全绿」 | [#15](https://github.com/Yotoha0303/go-order-management-system/issues/15) | IN_PROGRESS | `qa-validator` / `backend-dev` |
+| **GAP-017** | P1 | CI/门禁 | `.github/workflows/ci.yml` 无任何前端作业，GAP-013 全部前端用例在 PR 上不执行 ⇒ 违反 `AGENTS.md` §2 03 环「新建用例 100% 纳入 CI 矩阵」 | [#16](https://github.com/Yotoha0303/go-order-management-system/issues/16) | IN_PROGRESS | `sre-operator` / `frontend-dev` |
+| **GAP-018** | P2 | 数据/接口契约 | 商品主键 `Product.ID` 为**自增** bigint，仍以 JSON 裸数字输出（`product.go:11`），与订单侧 `Order.ID` 的字符串约定不一致；当前不是缺陷（远未及 2^53），但商品 ID 一旦改为 Snowflake 即重演 GAP-012 | —（待建 Issue） | IN_PROGRESS | `data-engineer` / `backend-dev` |
+| **GAP-019** | P1 | 文档/编号 SSOT | `docs/changes/` 中编号 `004` 与 `005` **各被两个不同文件占用**（`004-fix-gap-005-…` + `004-support-mysql-tls-connection.md`；`005-fix-gap-003-…` + `005-support-cors-and-spa-rewrites.md`）⇒ 本仓任何「编号唯一」的说法都是**假守卫** | —（待建 Issue） | IN_PROGRESS | `ssot-scribe` |
 
 ---
 
@@ -141,3 +155,112 @@
   1. 纠正测试断言：并发同 Key 必须且仅有 1 个成功创建，其余请求断言返回 `ErrOrderBeingCreated`；
   2. 完善集成测试启动指引与轻量单元测试分层。
 - **闭环方案**：纠正 `TestCreateOrder_ConcurrentSameIdempotencyKey_CreatesOneOrder` 断言矩阵；新增零依赖 `mockRRConnector` 单测 `TestCreateOrder_IdempotencyKeyRecordNotFoundInRR_ReturnsOrderBeingCreatedAndReleasesPreDeduct`，脱敏外部容器即可 100% 覆盖 RR 快照盲区。见 `docs/changes/003-fix-gap-002-and-011-idempotency-rr.md`。已通过变异测试证伪与门禁审计。
+
+### GAP-012 · 订单主键大整数 JSON 精度截断
+- **现状**：订单主键由 `pkg/idgen` 的 Snowflake 生成，为 63 位整数；接口以 JSON 原生数字输出该字段，前端经 `JSON.parse` 解析后超出 IEEE-754 双精度安全整数范围（`Number.MAX_SAFE_INTEGER`），末位被截断；以截断后的 ID 拼装详情 / 支付 / 完成 / 取消请求路径，后端查无此单，四个接口均返回 404。
+- **风险**：写入与读取使用两个不同的 ID 事实，且**不会报类型错误**——表现为业务 404 而非序列化告警；订单详情、支付、完成、取消四条主链路对前端整体不可用。
+- **DoD**：
+  1. `model.Order.ID` 的 JSON 输出改为**字符串**（序列化侧统一约定，不得只在前端做 hack）；
+  2. 前端 `Order.id` 类型为 `string`，且构造 URL 路径时**原样透传**，不经过任何数值转换；
+  3. 提供**负向用例**证明「数字形式输出」会往返失真：同一 63 位 ID 经 JSON 数字路径往返后与原值不等（被截断），据此可证伪本判据不会静默放行。
+- **状态**：IN_PROGRESS —— 修复中，关联 [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14)。
+
+### GAP-013 · 创建订单表单行 key 与幂等 Key 生命周期缺陷
+- **现状**：创建订单表单的商品行以**数组 index** 作为 React key，删除中间行后 React 复用了错误的 DOM 节点，Radix Select 的内部状态残留到相邻行；提交失败后 `pendingSubmission` 未清空，下一次提交复用同一幂等 Key，被后端判定为重复请求；界面无显式的重置入口。
+- **风险**：用户看到的商品行与实际提交内容不一致（选错商品 / 数量），且失败后无法通过重试恢复——重试被幂等键拦成「处理中」，页面却无任何自愈手段。
+- **DoD**：
+  1. 商品行改用**稳定唯一** `rowId`（非数组 index）作为 key；
+  2. 提交**成功与失败均清空** `pendingSubmission`，并断言失败后重新提交会生成**全新**幂等 Key；
+  3. 提供显式的「清空」入口；
+  4. 有单测覆盖上述三项（含失败后重提生成新 Key 的用例）。
+- **状态**：IN_PROGRESS —— 修复中，关联 [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14)。
+
+### GAP-014 · 云端 Redis 凭据与 TLS 支持缺失
+- **现状**：`RedisConfig` 无 password / TLS 字段，`pkg/redis` 的连接构建仅支持明文 TCP；云托管 Redis 以 `rediss://`（TLS）暴露且要求凭据，握手无法完成。
+- **风险**：Redis 连接失败后，架构的**首道预扣防线**与**商品详情缓存**被静默旁路——服务仍能启动、部分接口仍能响应，**失效不会显式报错**，与 D3 的「失败即静默」同族。
+- **DoD**：
+  1. 配置层支持 `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_TLS`，并支持 `REDIS_URL=rediss://…` 形式；
+  2. 客户端在 TLS 模式下按 TLS 握手（不得静默退回明文）；
+  3. 启动日志可判定 Redis **已连接 / 连接失败**（失败必须显式可见，不得旁路后无声运行）；
+  4. 单测覆盖 TLS 分支，并含**负向用例**：非法布尔值（如 `REDIS_TLS=maybe`）必须报错而非被当作 false 静默吞掉。
+- **已裁定：维持降级启动（不改为 fail-fast）**——来源与依据如下，**该裁定已落痕，不再计为未决缺口**：
+  - **决定**：Redis 不可用时服务**继续启动**，保持现有降级旁路行为；**不**引入 fail-fast。
+  - **依据（实测，`docs/changes/013-fix-gap-014-redis-cloud-tls-config.md:307-309` 原文）**：该文件明确记「降级仍是『继续启动』…**未**改为 fail-fast。是否要 fail-fast 属架构决策…需 `system-architect` / `sre-operator` 裁定」——即**该问题原为未决项**。
+  - **裁定主体与时点**：由**用户**裁定「维持降级启动」（`2026-10-22`，经总控征询）；属该文件所述「需架构方裁定」的**上位裁定**。
+  - **残留义务（不是缺口，是约束）**：因不 fail-fast，**失败必须显式可见**——`redis connection failed … degraded to pass-through bypass`（Error 级日志）与启动日志的 `redis connected` 是这条裁定的**可观测前提**，DoD ③ 因此**不可删减**。
+- **状态**：IN_PROGRESS —— 修复中，关联 [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14)。
+
+### GAP-015 · 库存流水 `BizID` 的 Snowflake 裸数字输出
+- **现状**：`internal/model/stock_log.go:20`（HEAD 口径）为 `BizID *int64` 且 JSON 标签是 `json:"biz_id"`（**无** `,string`）。该字段由订单链路写入并承载订单主键：`internal/service/order_service.go:188`（`StockBizOrderDeduct`，下单扣减）与 `:557`（`StockBizOrderRollback`，订单取消）均赋 `&order.ID`，而 `order.ID` 是 63 位 Snowflake（`internal/model/orders.go:16`）。取值域 = **{nil, 订单 Snowflake}**：`internal/service/inventory_service.go:53-60`（初始化库存）与 `:116-123`（手动入库）不赋 `BizID`，故 nil 分支必须保持 `null`。列表接口挂在管理员组下（`router/router.go:138`，受 `AdminMiddleware`），`internal/handler/stock_log_handler.go:43-49` 直接 `response.Success(c, stockLogs)` 输出 `[]*model.StockLog`，裸数字因此直达响应体。前端 `fronted/src/features/order-inventory/types.ts:52` 声明 `biz_id?: number | null`，`fronted/src/features/order-inventory/stock-logs.tsx:120` 以 `` `#${log.biz_id}` `` 直接渲染。
+- **风险**：与 GAP-012 同一失效形态——写入与读取使用两个不同的 ID 事实，且**不会报类型错误**，只表现为流水页显示出错号的订单号；据此反查订单必然查无此单。实测（`node v22.23.2`，`2026-10-22T05:03Z`，探针值 `371447562240004097`）：`JSON.parse('{"biz_id":371447562240004097}')` 得到 `371447562240004100`，往返不相等；同一值以**字符串**形态往返则相等。
+- **DoD**：
+  1. `BizID` 的 JSON 输出改为**字符串**（序列化侧统一约定，不得只在前端做 hack）；`nil` 仍须序列化为 `null`，**不得**变成 `"0"` 或 `""`；
+  2. 前端 `StockLog.biz_id` 类型对齐（`string | null`），`stock-logs.tsx` 渲染路径**不得**做任何数值转换；
+  3. 有**原始字节**断言用例：直接对序列化后的 JSON 字节断言 `biz_id` 被引号包裹（不得用「反序列化到 `interface{}` 再比较」的写法——那会同时掩盖数字与字符串两种形态）；
+  4. 有**负向用例**证明数字形态必然失真：同一 63 位 ID 经 JSON 数字路径往返后与原值不等，据此可证伪本判据不会静默放行。
+- **状态**：IN_PROGRESS —— 关联 [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14)。**代码与独立测试侧已收口**：`docs/changes/014-fix-gap-015-stock-log-biz-id-precision.md` 记录了修复（`json:"biz_id,string"`，nil 仍为 `null`）与原始字节断言；`qa-validator` 已把 `internal/model/qa_json_surface_test.go` 的钉住用例**翻转**为「set id 必为字符串 + nil 必为 `null`」，实测：
+  ```
+  go test -count=1 ./internal/model/ -run TestQAStockLogBizIDShapePinsTheOpenContract -v
+  --- PASS: TestQAStockLogBizIDShapePinsTheOpenContract (0.00s)
+  ```
+  **故此前记录的「门禁因该用例变红」已不成立**，`go test ./...` 不再因此有红点。门禁读数见 `014-*.md` §6 / §7（含 §7.2 对 `tsc --noEmit` 空转的订正）。
+  **仍保持 `IN_PROGRESS`**：按状态枚举，`CLOSED` 需「DoD 全部满足 + 已过独立测试 / 证伪 / **门禁裁决**」，而本轮 `gate-auditor` 裁决为**阻断**——缺的是**门禁裁决这一环**，不是代码或测试。
+
+### GAP-016 · CI 测试库名与本机门禁开关的双向失真
+- **现状**（两处独立缺陷，同属「集成用例在 CI 与本机都不真正跑」）：
+  1. **CI 侧必然失败**：`.github/workflows/ci.yml:22`（HEAD 口径）为 `MYSQL_TEST_DATABASE: go-order-management-system_test`，**含连字符**；`internal/service/test_helper_test.go:95` 定义 `safeDatabaseName`（正则 `^[a-zA-Z0-9_]+$`），`:101` 匹配失败即走 `:102` 的 `t.Fatalf`。而 `ci.yml:18` 又设 `RUN_MYSQL_TEST: "1"`，即**必然**进入该分支，故 `internal/service` 的集成用例在 CI 上必然失败。
+  2. **本机侧虚假全绿**：`RUN_MYSQL_TEST` 未设时，`internal/service/test_helper_test.go:35-37` 直接 `t.Skip`，包级别仍输出 `PASS`。
+- **实测**（本机 `go1.25.7 windows/amd64`）：
+  - 未设 `RUN_MYSQL_TEST` ⇒ `go test -count=1 ./internal/service/ -run TestInitInventory_CreateStockLog -v` 输出 `--- SKIP ... skip MySQL integration test; set RUN_MYSQL_TEST=1 to run`，`exit 0`；
+  - 设 `RUN_MYSQL_TEST=1` 且 `MYSQL_TEST_DATABASE=go-order-management-system_test` ⇒ `--- FAIL ... invalid MYSQL_TEST_DATABASE "go-order-management-system_test"`，`exit 1`。
+- **影响面（须精确，不得笼统写成「全部集成用例」）**：`MYSQL_TEST_DATABASE` 只有两处读者——`internal/service/test_helper_test.go:99`（校验后拼进 `CREATE DATABASE`）与 `pkg/database/testdb.go:48`（仅判非空，据以拼 DSN）。`internal/dao/dao_integration_test.go:147` 与 `migrations/integration/migrations_test.go:38` **不读该变量**，各自新建 `go_order_*_test_<pid>_<nano>` 隔离库（名字由代码生成，天然合法）。故**库名含连字符只让 `internal/service` 变红**；`RUN_MYSQL_TEST` 的 SKIP 分支则同时存在于上述三处。
+- **风险**：红灯出现在 CI 上（且根因是一条**配置拼写**而非业务逻辑），本机却永远看不到——两处失真互相掩盖：CI 红被当成「环境问题」，本机绿被当成「已通过」。
+- **DoD**：
+  1. `ci.yml` 的库名与 `safeDatabaseName` 相容（下划线形态），且**保留**该校验——它是库名拼进 `CREATE DATABASE` 之前的标识符防线，不是可以绕开的障碍；
+  2. `RUN_MYSQL_TEST=1` 时集成用例**真绿**，不得以 SKIP 代替；且须能证明**确实执行了**（例如给出非 SKIP 的执行数，而不是只看包级 `PASS`）；
+  3. **负向用例**：非法库名必须 `Fatalf` 而非静默跳过——这是当前行为，须**钉住**，防止日后有人把校验改成 skip 来换绿；
+  4. 本机与 CI 使用**同一套**开关语义（`AGENTS.md` §5「本地跑的那一套 = CI 跑的那一套」）。
+- **状态**：IN_PROGRESS —— 关联 [#15](https://github.com/Yotoha0303/go-order-management-system/issues/15)；Issue 已建档，编号已回填至登记表与本节。
+
+### GAP-017 · CI 缺前端作业，03 环用例在 PR 上不执行
+- **现状**：`.github/workflows/ci.yml`（HEAD 口径，共 90 行）**只有一个作业** `quality`（`:26-27`），其步骤全部是 Go / goose / golangci-lint / `docker build`；**无 `actions/setup-node`，无任何 `npm` / `npx` 调用**。而 `fronted/` 下已存在 **22 个测试文件**（`Get-ChildItem fronted/src -Recurse -Include *.test.ts,*.test.tsx`，已排除 `__screenshots__` 下的两个**同名 1 字节产物**——实测 `Test-Path` 为真但 `ReadAllBytes` 被拒、非源码用例），其中含 GAP-013 的相关用例：`order-submission.test.ts`、`order-draft.test.ts`、`qa-order-submission-lifecycle.test.ts`、`qa-orders-form.test.tsx`。`fronted/package.json:14` 的 `test` 脚本为 `vitest run --browser.headless`。
+- **风险**：前端用例**存在**但**不在 PR 门禁内**——本地跑与不跑都不影响合并。这正是 `AGENTS.md` §2 03 环「新建用例 **100% 纳入 CI 矩阵**（拒绝门外用例）」所禁止的「门外用例」，且与 D3 同族：**失败不会响**。
+- **DoD**：
+  1. CI 有**独立前端作业**，类型检查步骤**必须是 `tsc -b`**——这不是可选替代：`tsc --noEmit` 在本仓**只检查 0 个源文件、恒 `exit 0`**，等同没有类型门禁（证据见下方「① 的判据依据」）。同一步作业还须执行 `eslint` 与 `vitest run`；
+  2. 该作业失败**必须**使 PR 变红（作为 required check 的组成部分，不是 advisory）；
+  3. 说明**为何不能塞进现有 Go 作业**——两条独立理由：**循环时长**（Go 循环与 `npm ci` + 浏览器二进制安装的耗时互不相关，合并后每次 Go 迭代都要等前端依赖装完）与**失败定位**（一个作业红无法区分是 Go 还是前端坏了）。
+- **① 的判据依据（本机实测）**：`fronted/tsconfig.json` 是 solution 风格（`"files": []` + `references`），故以根配置执行时**根本不编译任何文件**。
+  - 文件计数（`2026-10-22T05:02Z`，`--listFiles` 过滤 `node_modules` / `typescript/lib`）：`npx tsc --noEmit` 检查 **0** 个源文件、`exit 0`；`npx tsc -p tsconfig.app.json --noEmit --listFiles` 检查 **150** 个；`npx tsc -b` 走 `references`，与后者同集。
+  - **注入真实类型错误后的判别力**（`backend-dev` 注入 `src/__tsc_gate_probe.ts` 的 TS2322，探针已撤回、`Test-Path` 现为 `False`）：`npx tsc --noEmit` → `exit 0`（**漏检**）；`npx tsc -b` → `exit 2`（报出 `TS2322`）。
+  - **结论**：只有 `tsc -b` 是**真正执行类型检查**的形式；`tsc --noEmit` 在本仓是**空转**，写成它就是一条无牙的判据（D3）。此条为 DoD ① 的判据依据，**不改动本项核心问题与 DoD 编号**。
+- **状态**：IN_PROGRESS —— 关联 [#16](https://github.com/Yotoha0303/go-order-management-system/issues/16)；Issue 已建档，编号已回填至登记表与本节。
+
+### GAP-018 · 商品主键序列化约定与订单侧不一致
+- **现状**：`internal/model/product.go:11` 为 `ID int64 \`gorm:"primaryKey;autoIncrement" json:"id"\``（**自增**，非 Snowflake）；`migrations/00001_create_product.sql:3` 亦为 `id BIGINT NOT NULL AUTO_INCREMENT`。该字段**直接进入响应体**：`internal/handler/product_handler.go:49`（创建）、`:83`（列表）、`:147`（详情）均为 `response.Success(c, product/…products…)`，无 DTO 转换层。
+- **风险**：**当前不是缺陷**——自增 ID 远未及 `Number.MAX_SAFE_INTEGER (2^53-1)`，`JSON.parse` 不会截断。真正的风险是**契约不一致的沉默性**：订单侧（`Order.ID` / `OrderItem.OrderID`）与库存流水侧（`GAP-015` 的 `StockLog.BizID`）都已字符串化，商品侧仍是数字；一旦商品主键改为 Snowflake（或引入外部/分布式 ID），将**原地重演 GAP-012**，且同样不报错。来源：`docs/changes/011-fix-gap-012-order-id-json-precision.md:87-89` 与 `:214`（原文建议「由 `ssot-scribe` 决定是否登记为独立条目」）。
+- **与 GAP-015 的边界（不得互相替代）**：GAP-015 覆盖的是 `StockLog.BizID`，其取值是**订单** Snowflake；本项的载体是 `Product.ID`，取值是**商品**自增主键。两者载体、取值域、风险性质均不同，**不可用一条结掉另一条**。
+- **DoD**：
+  1. 明确商品主键的**长期生成策略**（保持自增 / 迁 Snowflake / 换外部 ID），并落 ADR——这是 01 环决策，**不得**由实现方顺手决定；
+  2. 若**保持自增**：写明「不字符串化」的理由，并加**守护用例**把「当前不是缺陷」变成可证伪的断言——一旦商品 ID 越过 `2^53` 或生成方式改为非自增，用例必须**主动失败**（不得静默继续）；
+  3. 若**迁 Snowflake**：与订单侧同批字符串化，含原始字节断言 + 数字形态往返失真的负向用例（同 GAP-012 / GAP-015 口径）；
+  4. 无论选哪条，都须在 `docs/table_design.md` 与前端 `types.ts` 同步该决定（D4：不留两处不同成熟度）。
+- **状态**：IN_PROGRESS —— 尚无 Issue 编号；**待架构裁定**（DoD ① 未决，故本项暂不可判 `CLOSED`）。
+
+### GAP-019 · `docs/changes/` 编号 `004` / `005` 各被两个文件占用
+- **现状**（全 ref 并集实测，非单看当前检出）：`004` 与 `005` 各有两个文件并存，且**自 `main` 起即如此**（`main`、`origin/main`、`origin/HEAD`、`fix/issue-14-order-module` 四个 ref 均含这四个文件）：
+  - `docs/changes/004-fix-gap-005-cancel-expired-order-redis-recovery.md`（GAP-005 变更）
+  - `docs/changes/004-support-mysql-tls-connection.md`（MySQL TLS 支持，非 GAP 编号体系）
+  - `docs/changes/005-fix-gap-003-outbox-skip-locked.md`（GAP-003 变更）
+  - `docs/changes/005-support-cors-and-spa-rewrites.md`（CORS / SPA 重写，非 GAP 编号体系）
+  - 复检命令与结论见本节末尾「复检留痕」。
+- **风险**：同一编号指向两个不同变更，`docs/changes/004` 与 `005` 在引用中**有歧义**（读者无法确定指的是哪一次改动）；更关键的是它**证伪了「编号唯一」这个隐含前提**——本仓**没有任何**检查 `docs/changes` 编号唯一性的机械守卫，故这类撞车**不会被任何门禁发现**。与 GAP-016（CI 库名） / GAP-017（前端不在 CI）同属**「守卫假绿」家族**：绿着，但没在检查。
+- **为何是 `GAP-` 而不是 `DEFER-`**：`DEFER-` 用于「**有理由的主动延期**」；本项是**已发生的既有缺陷**，且其后果（引用歧义 + 无守卫）不会因延期而消失，也没有给出延期的理由。**延期不改变它是缺陷**，故记 `GAP-`。
+- **DoD**：
+  1. 选定并落定一种解法，三选一：**重命名**（改掉后到者，如 `004-support-mysql-tls-connection.md` → 顺延新号）/ **声明豁免**（在 `docs/changes/README.md` 写明「非 GAP 类变更可不占 GAP 序号」并列出既有例外）/ **引入时间戳前缀**（`YYYYMMDD-NNN-*`，从根上消除手工选号）；
+  2. **不重命名既有文件直到引用一并改完**：重命名须全仓更新引用，并给出 `git grep -n '<旧文件名>'` **零命中**的证据（含未跟踪文件），否则就是制造幻影引用；
+  3. **加机械守卫**：按「全 ref 并集」逐 `ls-tree` 判重（**不得只看当前检出**，否则并行分支撞号照旧漏），撞车即红；并配**负向用例**——注入「同一编号两个文件」必须触发失败（D3：不注入故障就不算验证过）；
+  4. **历史快照不改写**：已在 `docs/changes/*` 内被引用的既有文件名，若必须改，须同时保留指向说明，不得静默消失。
+- **复检留痕（`2026-10-22`，本机实测）**：`git for-each-ref --format='%(refname)' refs/heads refs/remotes` 后逐 ref 执行 `git ls-tree -r --name-only <ref> -- docs/changes`，并集去重；编号前缀集合 = `001…010`，其中 `004`、`005` 各出现 **2** 个不同文件名（其余各 1）。工作树另有未跟踪的 `011`–`014`，编号互不重复。
+- **状态**：IN_PROGRESS —— 尚无 Issue 编号；本项为**既有缺陷**（非本轮引入），按裁决不改写既有文件名。
+
+> ⚠️ **编号归属**：本节的 `GAP-017` 是**业务项目仓（本仓）**的编号。外层协作框架仓另有一个同名 `GAP-017`（「规则有了、机械检查没有」）——**两者互不相干、不得互引**（框架 `AGENTS.md` §6：跨仓引用编号 = 幻影引用）。
