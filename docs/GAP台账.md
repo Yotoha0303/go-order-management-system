@@ -46,6 +46,7 @@
 | **GAP-029** | P1 | 构建/发布（**04 环**） | **04 环在本仓无任何对应物**：`AGENTS.md` §2 该环准出为「镜像**不可变 Digest** + 运行时断言 `REVISION == Git HEAD`」。实测全仓 `git grep -iE 'REVISION\|@sha256\|digest'` **零命中**（唯一命中 `LICENSE:43` 的英文单词 "revisions"，非制品）；`Dockerfile:14/36/50` 三个 `FROM` **全部是可变 tag**（`${GO_IMAGE}` / `${RUNTIME_IMAGE}` → `golang:1.25.7-alpine` / `alpine:3.22`，见 `compose.yml:18-19`）；`compose.yml:60/75/90` 的 mysql/redis/rabbitmq 亦为可变 tag。**无 digest 固定、无 REVISION 断言** | [#21](https://github.com/Yotoha0303/go-order-management-system/issues/21) | IN_PROGRESS | `sre-operator` / `sec-auditor` |
 | **GAP-030** | P1 | 部署（**05 环**） | **05 环准出为「部署脚本全链路幂等 + 配置与环境变量双向对齐无残留」**，本仓两半均无判据：`deploy.sh`（**451 行**）未见幂等自检（无「连续执行无状态突变」的断言），仅 `:216` 的 `compose up -d --build --wait`；**配置双向对齐**这一半只靠 `AGENTS.md` §2 的 `docker compose config -q`（**纯语法校验，不执行任何容器**，`Makefile:189-190`）。**注意**：`GAP-026`（compose 三处库名含连字符）是**这半边的一个具体面**，**不得互相结掉**——库名只是配置对齐里的一条 | [#21](https://github.com/Yotoha0303/go-order-management-system/issues/21) | IN_PROGRESS | `sre-operator` / `backend-dev` |
 | **GAP-031** | P1 | 观测/排障/恢复/复盘/自动化（**06–10 环**） | **06–10 环在本仓无任何对应物**（合并为一条，按裁决口径）。实测：`alertmanager` **零命中**；`severity` / `rto` / `rpo` **仅在散文里出现**（`docs/adr/003-*.md:35` 一处提到 Alertmanager 无法感知漂移——**是问题陈述，不是制品**）；`git ls-files` 过滤 `prometheus\|alertmanager\|grafana\|dashboard\|runbook\|slo\|sli` **零制品命中**（`fronted/src/features/order-inventory/dashboard.tsx` 是**业务页面**，与 SRE 仪表盘无关）；过滤 `drill\|failover\|backup\|restore\|chaos` **零命中** ⇒ **无停机演练、无 RTO/RPO 实测、无 Runbook、无告警规则、无复盘模板、无定时归档** | [#21](https://github.com/Yotoha0303/go-order-management-system/issues/21) | IN_PROGRESS | `sre-operator` / `rca-investigator` |
+| **GAP-032** | P2 | 架构决策/一致性 | **ADR-001 的决策三（TTL 租期）与决策四（Redis `SET NX` 幂等互斥）未落地**——且**不是「实施未完成」，是闭环走了别的路径**：`GAP-005` 用状态无关的防御性释放闭环、`GAP-002` 用 MySQL `ErrRecordNotFound` 处理。**核心风险**：决策三的 TTL 是预扣凭证的**兜底回收机制**，当前 `SET` **无 `EX`** ⇒ 若补偿链路本身失败，reservation 键**永不自动过期**、**永久占用库存**；现仅依赖「补偿必定执行」这一假设，**无任何时间兜底** | [#23](https://github.com/Yotoha0303/go-order-management-system/issues/23) | IN_PROGRESS | `system-architect` / `backend-dev` |
 
 ---
 
@@ -717,3 +718,40 @@
   > - `fronted/src/features/order-inventory/dashboard.tsx` —— **业务页面**（库存看板），**与 SRE 仪表盘无关**；
   > - `fronted/eslint.config.js` —— 命中是 `@eslint/js` / `eslint-plugin-*` 里的**子串**，**纯误报**。
   > **排除理由已同步写入 Issue #21 正文**；两处**均不得**计入「06–10 环有对应物」。
+
+### GAP-032 · ADR-001 决策三（TTL 租期）与决策四（Redis `SET NX` 幂等互斥）未落地
+- **发现路径**：`2026-10-22` 修 `ADR-001` 文件头 `Proposed` / 索引表 `Accepted` 的 D4 漂移时，复核「关联 GAP 已闭环 ⇒ 决策已落地」这一前提，**发现该前提不成立**（见下）。
+- **现状（实测，`2026-10-22`，HEAD `e37da30`）**——ADR-001 共 **四条**决策（`:76` / `:87` / `:98` / `:120`），**前两条落地、后两条未落地**：
+
+  | 决策 | 原文位置 | 实测 | 证据 |
+  | --- | --- | --- | --- |
+  | 一 · 预扣前置 + 事务内零网络 IO | `:76` | ✅ 落地 | `internal/service/order_service.go:47-50`（预扣在 `:72` 的 `db.Transaction` **之前**）、`:58` 注释 |
+  | 二 · 原生原子增量（废黜绝对值覆盖） | `:87` | ✅ 落地 | `internal/bizcache/inventory_stock_guard.go:88`、`:98` 的 `redis.call("INCRBY", …)` |
+  | 三 · **带 TTL 的二阶段预占** | `:98` | ❌ **未落地** | 全仓**无任何** `Expire` / `SetEx` / `TTL` 作用于 reservation 键；`inventory_stock_guard.go:74` 为 `redis.call("SET", KEYS[n + 1], cjson.encode(reservation))` —— **无 `EX` 参数** |
+  | 四 · **Redis `SET NX` 幂等前置互斥** | `:120` | ❌ **未落地** | `SetNX` / `NX` / `PROCESSING` 在 `internal/`、`pkg/` **零命中**；实际幂等走 MySQL —— `internal/dao/order_idempotency_key.go:18` 的 `clause.OnConflict{DoNothing: true}` + `order_service.go:80-83` 把 `gorm.ErrRecordNotFound` 转 `ErrOrderBeingCreated` |
+
+- **⚠️ 定性（这一句是本条的核心，不得省略）**：**这不是「实施未完成」，是「闭环走了别的路径」。**
+  - `GAP-005` 的闭环**不是** TTL，而是**状态无关的防御性释放**（ADR-001 决策三的**第 2 点**）——即「即便订单已是 `Cancelled`，仍无条件尝试释放」。**TTL 这条第 1 点从未被采用。**
+  - `GAP-002` 的闭环**不是** Redis 互斥，而是 MySQL 侧处理 `ErrRecordNotFound`。且 `GAP-002` 的 **DoD 本就给了两个选项**——「幂等 Key 获取解耦或优化查询方式（**采用当前读 或 前置分布式锁**）」，代码取了**前者**。**故 DoD 满足 ≠ ADR 决策四被遵循。**
+  - **⇒ 因此「关联 GAP 已 `CLOSED`」推不出「ADR 决策已落地」。这两件事不等价**，本条即其反例。
+  - **对后人的提醒**：**不要**把本项读成「当时漏做了」——决策三第 2 点与决策四的替代路径**各自都是有效闭环**（`GAP-005` / `GAP-002` 均已过独立测试、证伪与门禁裁决）。**本项要裁的是「那两条决策本身还算不算数」，不是「当时的修复对不对」。**
+- **风险（本条的价值所在）**：ADR-001 决策三的 **TTL 是预扣凭证的兜底回收机制**。当前 `SET` 无 `EX`，意味着：
+  - **若补偿链路本身失败**——进程在 `preDeductInventory` 成功之后、`releasePreDeductedInventory` 之前**崩溃**（或该调用自身失败、或消息丢失导致重试链断裂）——则该 reservation 键**永不自动过期**；
+  - 后果是 `inventory:{stock}:reservation:<orderID>` **永久残留**，对应的 Redis 可用库存**被永久占用**（少卖），且**没有任何机制会发现它**（无 TTL 到期、无对账覆盖——对账 `inventoryreconcile` 修的是 `stock_quantity` 与 DB 的差异，**不清理孤儿 reservation**）。
+  - **当前实际依赖的是一个假设**：「补偿必定执行」。而**凡是「必定」的东西，都是没有兜底的**——这正是 D3 的形态：**失败不会响，只会静默地少卖**。
+  - **与 `GAP-005` 的边界（不得互相结掉）**：`GAP-005` 覆盖的是「订单已 `Cancelled` 时的幂等回补」；**本项覆盖的是「补偿链路整体失败」**——后者恰恰是 `GAP-005` 的修复**够不到**的场景（它的修复本身就在补偿链路**内部**）。**两者是「链路内正确」与「链路整体失效」的区别。**
+- **DoD（二选一，由 `system-architect` 裁定；本台账不预判）**：
+  - **(a) 认定有意放弃** ⇒ 走 `Superseded` / 修订 **ADR-001 决策三**，**并写明放弃后由什么机制兜底**；
+    - **硬要求**：若**无**替代兜底，**必须在 ADR 内显式记录该风险**（即「孤儿 reservation 不会被自动回收，需人工巡检」），**不得**只是把决策划掉。**「划掉 + 不写兜底」比不划更糟**——它会让后人以为该风险已被处置。
+  - **(b) 认定仍需实施** ⇒ 转实施任务，DoD 须含：
+    1. reservation 键**带 TTL**（如原文的 15 分钟支付窗口 + 5 分钟网络漂移冗余 = 20 分钟，**具体值由架构方定**），且 TTL **不得短于**订单超时窗口（否则未超时的预占会被提前回收，造成**超卖**——这是反向风险，须一并论证）；
+    2. **负向用例（D3）**：**模拟补偿链路失败**（跳过 / 注入 `releasePreDeductedInventory` 失败），验证凭证仍能**在 TTL 到期后自动回收**、且回收后可用库存恢复。**不注入这个故障就不算验证过**；
+    3. **正反两侧都要**：既验证「补偿失败时 TTL 兜底生效」，也验证「补偿成功时 TTL **不**误伤正常预占」（即正常支付窗口内不得被回收）。
+  - **决策四的处置**：同批裁定——若认定 MySQL 侧处理已是**等价替代**，须在 ADR 内写明**替代关系与理由**（现状是「原文写 Redis 互斥、代码用 MySQL 冲突处理」，**两者不等价**：前者是内存级前置拦截，后者是事务内仲裁，**对 RR 快照盲区的处理路径不同**）；若仍需前置互斥，同样转实施任务。
+- **严重度：`P2`（判断依据，非转述）**：
+  - **不判 P1**：触发需**两个条件叠加**——① 预扣成功，**且** ② 补偿链路整体失败。单看任一条件都不触发；且崩溃窗口窄（预扣与补偿之间）。
+  - **不判 P3**：后果**不可自愈且不可见**——永久库存泄漏、无 TTL、无对账覆盖、无告警。P3 项（如 `GAP-022`–`GAP-025`）的共同特征是「只影响测试健壮性或开发者体验，不影响生产数据」；**本项影响生产库存账实相符**，性质不同。
+  - **与同类对比**：`GAP-014`（Redis 失效被静默旁路）判 **P1**，因其**无需叠加条件**即可发生；本项需叠加，故**低一档**。
+- **状态**：IN_PROGRESS —— 关联 [#23](https://github.com/Yotoha0303/go-order-management-system/issues/23)。**待架构裁定**（DoD 二选一未决，故本项暂不可判 `CLOSED`）。P2（判据见上，**非「后果严重就升级」**）。
+- **关联载体**：本项的发现与证据**同时记于** `docs/adr/001-high-concurrency-distributed-consistency-inventory-architecture.md` 文件头的「状态订正」注（含决策三 TTL / 决策四未落地的实测），**以及** `docs/adr/README.md` 索引表 ADR-001 行的指针。**三处须同步**（D4）——任一方改动，其余两方必须同步。
+- ⚠️ **同步义务（D4）**：本条正文与 **Issue [#23](https://github.com/Yotoha0303/go-order-management-system/issues/23)** 正文**承载同一份实测证据**（四条决策的落地对照表 / `inventory_stock_guard.go:74` 的 `SET` 无 `EX` / `SetNX`·`NX`·`PROCESSING` 零命中 / `order_idempotency_key.go:18` 的 `OnConflict{DoNothing}` / `order_service.go:80-83` 的 `ErrRecordNotFound` 转换 / 以及对账不清理孤儿 reservation）——**任一方改动，另一方必须同步**，否则立即产生两处不同成熟度的事实。
