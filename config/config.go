@@ -40,9 +40,24 @@ type MySQLConfig struct {
 	LogLevel        string        `yaml:"logLevel"`
 }
 
+// RedisConfig describes how to reach Redis. Two shapes are supported:
+//
+//   - URL: a full connection string (redis:// or rediss://). When it is set,
+//     applyEnvOverrides discards the discrete YAML fields so a stale addr in
+//     config.yml cannot shadow a cloud rediss:// endpoint.
+//   - discrete fields: addr / username / password / db / tls.
+//
+// Environment variables REDIS_URL / REDIS_ADDR / REDIS_USERNAME /
+// REDIS_PASSWORD / REDIS_DB / REDIS_TLS are applied on top; a discrete
+// environment variable overrides the field it names, including one derived
+// from REDIS_URL.
 type RedisConfig struct {
-	Addr string `yaml:"addr"`
-	DB   int    `yaml:"db"`
+	URL      string `yaml:"url"`
+	Addr     string `yaml:"addr"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
+	TLS      bool   `yaml:"tls"`
 }
 
 type InventoryReconcileConfig struct {
@@ -132,15 +147,8 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.MySQL.LogLevel = v
 	}
 
-	if v := os.Getenv("REDIS_ADDR"); v != "" {
-		cfg.Redis.Addr = v
-	}
-	if v := os.Getenv("REDIS_DB"); v != "" {
-		db, err := strconv.Atoi(v)
-		if err != nil {
-			return fmt.Errorf("invalid REDIS_DB: %w", err)
-		}
-		cfg.Redis.DB = db
+	if err := applyRedisEnvOverrides(&cfg.Redis); err != nil {
+		return err
 	}
 	if err := applyRabbitMQEnvOverrides(&cfg.RabbitMQ); err != nil {
 		return err
@@ -157,6 +165,41 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.JWT.ExpireHours = hours
 	}
 
+	return nil
+}
+
+func applyRedisEnvOverrides(cfg *RedisConfig) error {
+	if v := os.Getenv("REDIS_URL"); v != "" {
+		// A connection URL is the single source of endpoint truth: discard every
+		// discrete field from config.yml, otherwise the shipped default
+		// `addr: 127.0.0.1:6379` would silently replace the cloud endpoint.
+		// Discrete environment variables below may still re-populate a field.
+		*cfg = RedisConfig{URL: v}
+	}
+	if v := os.Getenv("REDIS_ADDR"); v != "" {
+		cfg.Addr = v
+	}
+	if v := os.Getenv("REDIS_USERNAME"); v != "" {
+		cfg.Username = v
+	}
+	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
+		cfg.Password = v
+	}
+	if v := os.Getenv("REDIS_DB"); v != "" {
+		db, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("invalid REDIS_DB: %w", err)
+		}
+		cfg.DB = db
+	}
+	if v := os.Getenv("REDIS_TLS"); v != "" {
+		tlsEnabled, err := strconv.ParseBool(v)
+		if err != nil {
+			// Fail closed: a malformed flag must not degrade to plaintext.
+			return fmt.Errorf("invalid REDIS_TLS: %w", err)
+		}
+		cfg.TLS = tlsEnabled
+	}
 	return nil
 }
 

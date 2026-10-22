@@ -16,8 +16,18 @@ mysql:
   logLevel: warn
 
 redis:
+  # Full connection string; redis:// or rediss:// (rediss enables TLS).
+  # When REDIS_URL is set (here or via the environment) the url/addr/username/
+  # password/db/tls values in this file are IGNORED, so the localhost addr
+  # below cannot shadow a cloud endpoint. Discrete REDIS_* environment
+  # variables may still override individual fields of the URL.
+  url: ""
   addr: 127.0.0.1:6379
+  username: ""
+  password: ""
   db: 0
+  # Force TLS when the endpoint is configured via addr instead of rediss://.
+  tls: false
 
 inventoryReconcile:
   enabled: true

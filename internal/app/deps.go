@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"time"
 
@@ -50,7 +51,12 @@ func InitDeps(logger *slog.Logger) (*Deps, error) {
 
 	redisClient, err := redis.InitRedis(cfg)
 	if err != nil {
-		logger.Warn("redis unavailable, product cache disabled", "err", err)
+		logger.Error("redis connection failed; inventory pre-deduction (Lua) and product cache are degraded to pass-through bypass",
+			"addr", redisEndpointForLog(cfg),
+			"err", err,
+		)
+	} else {
+		logger.Info("redis connected", "addr", redisEndpointForLog(cfg))
 	}
 
 	metrics := observability.NewMetrics()
@@ -128,4 +134,20 @@ func InitDeps(logger *slog.Logger) (*Deps, error) {
 		InventoryWorker:    inventoryWorker,
 		Metrics:            metrics,
 	}, nil
+}
+
+// redisEndpointForLog renders the Redis endpoint for logs with any credentials
+// stripped, so a rediss://user:pass@host URL never leaks its password.
+func redisEndpointForLog(cfg *config.Config) string {
+	if cfg == nil {
+		return "unconfigured"
+	}
+	if cfg.Redis.Addr != "" {
+		return cfg.Redis.Addr
+	}
+	u, err := url.Parse(cfg.Redis.URL)
+	if err != nil || u.Host == "" {
+		return "unconfigured"
+	}
+	return u.Scheme + "://" + u.Host
 }

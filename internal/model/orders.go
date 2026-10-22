@@ -10,7 +10,10 @@ const (
 )
 
 type Order struct {
-	ID             int64      `gorm:"primaryKey;autoIncrement;type:bigint" json:"id"`
+	// ID is a 63-bit Snowflake identifier. It is serialized as a JSON string
+	// because a JSON number would be truncated by IEEE-754 double-precision
+	// parsers (Number.MAX_SAFE_INTEGER = 2^53-1) on the consumer side.
+	ID             int64      `gorm:"primaryKey;autoIncrement;type:bigint" json:"id,string"`
 	UserID         int64      `gorm:"type:bigint;not null;index:idx_orders_user_id_created_at,priority:1" json:"user_id"`
 	OrderNo        string     `gorm:"type:varchar(255);not null;uniqueIndex:uk_orders_order_no" json:"order_no"`
 	TotalAmountFen int64      `gorm:"column:total_amount_fen;type:bigint;not null" json:"total_amount_fen"`

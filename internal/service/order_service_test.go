@@ -27,6 +27,21 @@ func newOrderService(t *testing.T) (*gorm.DB, *service.OrderService) {
 	return testDB, service.NewOrderService(testDB)
 }
 
+// orderIDs renders the ids of an order slice for failure messages. Printing
+// []*model.Order with %+v only yields heap addresses, so a failing pagination or
+// isolation assertion used to say nothing about which orders came back.
+func orderIDs(orders []*model.Order) []int64 {
+	ids := make([]int64, 0, len(orders))
+	for _, order := range orders {
+		if order == nil {
+			ids = append(ids, -1)
+			continue
+		}
+		ids = append(ids, order.ID)
+	}
+	return ids
+}
+
 type fakeInventoryPreDeductor struct {
 	applied      bool
 	insufficient bool
@@ -596,7 +611,7 @@ func TestOrdersAreIsolatedByUserAndIdempotencyKey(t *testing.T) {
 		t.Fatalf("list first user orders: %v", err)
 	}
 	if len(orders) != 1 || orders[0].ID != first.ID {
-		t.Fatalf("expected only first user's order, got %+v", orders)
+		t.Fatalf("expected only first user's order %d, got ids %v", first.ID, orderIDs(orders))
 	}
 	if total != 1 {
 		t.Fatalf("expected first user's total=1, got %d", total)
@@ -614,7 +629,7 @@ func TestListOrders_PaginatesNewestFirst(t *testing.T) {
 		t.Fatalf("list first page: %v", err)
 	}
 	if len(firstPage) != 2 || firstPage[0].ID != third.ID || firstPage[1].ID != second.ID {
-		t.Fatalf("unexpected first page: %+v", firstPage)
+		t.Fatalf("expected first page ids [%d %d] (newest first), got %v", third.ID, second.ID, orderIDs(firstPage))
 	}
 	if firstTotal != 3 {
 		t.Fatalf("expected first page total=3, got %d", firstTotal)
@@ -625,7 +640,7 @@ func TestListOrders_PaginatesNewestFirst(t *testing.T) {
 		t.Fatalf("list second page: %v", err)
 	}
 	if len(secondPage) != 1 || secondPage[0].ID != first.ID {
-		t.Fatalf("unexpected second page: %+v", secondPage)
+		t.Fatalf("expected second page ids [%d], got %v", first.ID, orderIDs(secondPage))
 	}
 	if secondTotal != 3 {
 		t.Fatalf("expected second page total=3, got %d", secondTotal)
@@ -1094,7 +1109,7 @@ func TestFinishedOrder_UnableCancel_ReturnsError(t *testing.T) {
 
 	err := orderSvc.CancelOrder(context.Background(), testUserID, order.ID)
 	if !errors.Is(err, service.ErrOrderAlreadyFinished) {
-		t.Fatalf("expected order cancel failed,got %d", err)
+		t.Fatalf("expected order cancel failed, got %v", err)
 	}
 
 	var got model.Order
@@ -1103,7 +1118,7 @@ func TestFinishedOrder_UnableCancel_ReturnsError(t *testing.T) {
 	}
 
 	if got.Status == model.OrderStatusCancelled {
-		t.Fatalf("expected order status cancelled,got %d", got.Status)
+		t.Fatalf("expected a finished order to stay out of cancelled state, got status=%d", got.Status)
 	}
 
 	if got.CancelledAt != nil {
@@ -1645,6 +1660,27 @@ func TestCreateOrder_IdempotentReplayReturnsSameOrder(t *testing.T) {
 	}
 }
 
+// TestCreateOrder_IdempotentReplay_ReleasesExtraPreDeduct pins the idempotent
+// replay contract of the pre-deduct-fronted architecture (order_service.go:47-56,
+// :216-232; docs/changes/002-fix-gap-001-prededuct-timing.md "Attack 2").
+//
+// The contract is deliberately "pre-deduct first, then compensate", NOT "do not
+// pre-deduct again":
+//   - Redis pre-deduct is the first line of defence and runs BEFORE any MySQL
+//     access, so a replay cannot be recognised without first touching MySQL.
+//     Adding an idempotency lookup ahead of the pre-deduct would reintroduce the
+//     DB penetration that GAP-001 removed (and would let replay traffic hammer
+//     MySQL in a sold-out flash sale).
+//   - The replay therefore DOES pre-deduct a second time; the DB transaction then
+//     observes OrderAlreadyCreated, rolls back, and the extra reservation is
+//     released outside the transaction (idempotentReplay branch).
+//
+// Consequence for coverage: this single case also covers the "no duplicated
+// inventory occupation" property. Asserting len(preDeducts)==2 AND exactly one
+// release of that second orderID proves the replay's net reservation is zero —
+// i.e. inventory is not double-held, which is the property callers actually care
+// about. It does NOT claim "the second pre-deduct never happens"; do not add a
+// case asserting len(preDeducts)==1 without first changing the architecture.
 func TestCreateOrder_IdempotentReplay_ReleasesExtraPreDeduct(t *testing.T) {
 	testDB := setupTestDB(t)
 	guard := &fakeInventoryPreDeductor{applied: true}
@@ -1676,17 +1712,15 @@ func TestCreateOrder_IdempotentReplay_ReleasesExtraPreDeduct(t *testing.T) {
 	}
 	// Under pre-deduct fronting architecture:
 	// The second request pre-deducted at Redis, entered DB transaction, discovered OrderAlreadyCreated,
-	// and immediately released the extra pre-deduct on transaction rollback, ensuring zero inventory leak!
+	// and immediately released the extra pre-deduct on transaction rollback, ensuring zero inventory leak.
+	// The pair below (2 pre-deducts AND exactly 1 release of the second one) is what
+	// covers "no duplicated inventory occupation": net reservation of the replay is 0.
 	if len(guard.preDeducts) != 2 {
 		t.Fatalf("expected 2 redis pre-deduct attempts across both requests, got %d", len(guard.preDeducts))
 	}
 	if len(guard.releases) != 1 || guard.releases[0] != guard.preDeducts[1] {
 		t.Fatalf("expected 1 release for second pre-deducted order %d, got releases %v", guard.preDeducts[1], guard.releases)
 	}
-}
-
-func TestCreateOrder_IdempotentReplayDoesNotPreDeductRedisAgain(t *testing.T) {
-	TestCreateOrder_IdempotentReplay_ReleasesExtraPreDeduct(t)
 }
 
 func TestCreateOrder_SameIdempotencyKeyDifferentRequest_ReturnsConflict(t *testing.T) {

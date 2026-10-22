@@ -19,7 +19,10 @@ env:
   RUN_REDIS_TEST: "1"
   RUN_RABBITMQ_TEST: "1"
   MYSQL_TEST_PASSWORD: ci-password
-  MYSQL_TEST_DATABASE: go-order-management-system_test
+  # Must stay [a-zA-Z0-9_]+ — internal/service/test_helper_test.go enforces
+  # safeDatabaseName and t.Fatalf's otherwise. Hyphens are rejected there on
+  # purpose (it is a SQL identifier interposed into CREATE DATABASE).
+  MYSQL_TEST_DATABASE: go_order_management_system_test
   REDIS_ADDR: 127.0.0.1:6379
   RABBITMQ_URL: amqp://order_app:ci-rabbit-password@127.0.0.1:5672/
 
@@ -89,8 +92,35 @@ jobs:
       - name: Run golangci-lint
         run: golangci-lint run ./...
 
+      # -v is required: without it `go test` prints no --- PASS / --- SKIP lines,
+      # so a silently re-skipped integration suite would still read as `ok`.
+      # pipefail is required so `tee` cannot mask a genuine test failure.
       - name: Run test
-        run: go test ./...
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -v ./... 2>&1 | tee /tmp/test.log
+
+      # GAP-016 DoD-2: with RUN_MYSQL_TEST=1 set job-wide, no integration test may
+      # be skipped. Any --- SKIP fails the build and the counts are printed as
+      # the positive evidence that the suite really executed.
+      # The pattern tolerates leading whitespace on purpose: skips inside t.Run
+      # subtests print as `    --- SKIP: ...`, which a bare `^--- SKIP` misses.
+      - name: Assert no integration test was skipped
+        shell: bash
+        run: |
+          passes=$(grep -cE '^[[:space:]]*--- PASS' /tmp/test.log || true)
+          skips=$(grep -cE '^[[:space:]]*--- SKIP' /tmp/test.log || true)
+          echo "passes=$passes skips=$skips"
+          if [ "$skips" -ne 0 ]; then
+            echo "::error::tests were skipped ($skips) while integration switches are on; select tests with -run instead of skipping"
+            grep -nE '^[[:space:]]*--- SKIP' /tmp/test.log | head -20
+            exit 1
+          fi
+          if [ "$passes" -eq 0 ]; then
+            echo "::error::no test reported --- PASS; the suite did not run"
+            exit 1
+          fi
 
       - name: Run race tests
         run: go test -race ./...
@@ -109,3 +139,81 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t go-order-management-system:ci .
+
+  # Frontend gate. Kept as a separate job on purpose: it shares no steps with the
+  # Go loop, and folding it into `quality` would make every Go iteration wait on
+  # npm install + Playwright. No services are needed.
+  frontend:
+    name: Frontend (tsc, eslint, vitest browser, build)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: fronted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Node 22 from engines in fronted/package-lock.json:
+      #   vite 8.0.16   -> ^20.19.0 || >=22.12.0
+      #   eslint 10.4.1 -> ^20.19.0 || ^22.13.0 || >=24
+      #   vitest 4.1.8  -> ^20.0.0 || ^22.0.0 || >=24.0.0
+      # 22 is the only major satisfying all three.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: fronted/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The resolved Playwright version determines the browser revision, and
+      # `playwright` is pinned exactly in package.json ("1.59.1", not a range),
+      # so it is a reproducible cache key. Deliberately NOT hashFiles on the
+      # lockfile: that would miss on any unrelated dependency bump and cost a
+      # full re-download.
+      - name: Resolve Playwright version
+        id: playwright
+        run: |
+          version=$(node -p "require('./node_modules/playwright/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # vitest runs in browser mode (vite.config.ts test.browser.provider=playwright),
+      # so the Chromium binary must exist before the test step.
+      #
+      # Why the cache: on run 39767723671 the download took 781s while the actual
+      # browser tests took 12s - 94% of a 13m55s job was fetching Chromium.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
+
+      # This step still runs on a cache hit, on purpose. `--with-deps` also
+      # installs the OS packages, and playwright skips the download when the
+      # browser is already in the registry directory. Skipping the whole step on
+      # a hit would silently drop the apt dependencies.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # `tsc -b` (not `tsc --noEmit`): fronted/tsconfig.json is solution-style
+      # ("files": [] + references), so a bare `tsc --noEmit` checks 0 files and
+      # always exits 0. Measured with an injected TS2322 probe:
+      #   npx tsc --noEmit                -> exit 0 (no diagnostics)
+      #   npx tsc -b                      -> exit 2 (TS2322 reported)
+      # Kept as its own step (npm run build already runs tsc -b) so a failure
+      # is attributed to "type error", not "build failure".
+      - name: Type check
+        run: npx tsc -b
+
+      - name: Lint
+        run: npx eslint .
+
+      - name: Unit and browser tests
+        run: npx vitest run --browser.headless
+
+      - name: Build
+        run: npm run build

@@ -37,6 +37,34 @@ export function createIdempotencyKey(): string {
   return `idem-${randomPart}`
 }
 
+let rowIdSequence = 0
+
+/**
+ * Generate a stable identity for a draft order row (GAP-013).
+ *
+ * React reconciles lists by key. Using the array index as key means a reset
+ * (`key=0` -> `key=0`) does not remount the row, so Radix Select keeps the
+ * previously displayed value after the draft is cleared. A per-row identity
+ * that changes whenever a row is created forces the remount.
+ *
+ * The counter guarantees uniqueness within the session; the random part keeps
+ * ids distinct across page loads (same degradation strategy as the
+ * idempotency key, so plain-HTTP hosts keep working).
+ */
+export function createRowId(): string {
+  rowIdSequence += 1
+  return `row-${rowIdSequence}-${createIdempotencyKey()}`
+}
+
+/**
+ * Decide the idempotency key for one order submission.
+ *
+ * The fingerprint match means "this is the same submission still in flight",
+ * NOT "the user is ordering the same contents again": reuse is only valid
+ * while `previous` is the submission currently awaiting a response. Callers
+ * MUST clear the pending submission on both success and error, so the next
+ * click always starts a brand-new order with a brand-new key (GAP-013).
+ */
 export function prepareOrderSubmission(
   payload: CreateOrderPayload,
   previous?: PendingOrderSubmission | null,
