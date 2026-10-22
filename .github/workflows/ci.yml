@@ -92,8 +92,35 @@ jobs:
       - name: Run golangci-lint
         run: golangci-lint run ./...
 
+      # -v is required: without it `go test` prints no --- PASS / --- SKIP lines,
+      # so a silently re-skipped integration suite would still read as `ok`.
+      # pipefail is required so `tee` cannot mask a genuine test failure.
       - name: Run test
-        run: go test ./...
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -v ./... 2>&1 | tee /tmp/test.log
+
+      # GAP-016 DoD-2: with RUN_MYSQL_TEST=1 set job-wide, no integration test may
+      # be skipped. Any --- SKIP fails the build and the counts are printed as
+      # the positive evidence that the suite really executed.
+      # The pattern tolerates leading whitespace on purpose: skips inside t.Run
+      # subtests print as `    --- SKIP: ...`, which a bare `^--- SKIP` misses.
+      - name: Assert no integration test was skipped
+        shell: bash
+        run: |
+          passes=$(grep -cE '^[[:space:]]*--- PASS' /tmp/test.log || true)
+          skips=$(grep -cE '^[[:space:]]*--- SKIP' /tmp/test.log || true)
+          echo "passes=$passes skips=$skips"
+          if [ "$skips" -ne 0 ]; then
+            echo "::error::tests were skipped ($skips) while integration switches are on; select tests with -run instead of skipping"
+            grep -nE '^[[:space:]]*--- SKIP' /tmp/test.log | head -20
+            exit 1
+          fi
+          if [ "$passes" -eq 0 ]; then
+            echo "::error::no test reported --- PASS; the suite did not run"
+            exit 1
+          fi
 
       - name: Run race tests
         run: go test -race ./...
