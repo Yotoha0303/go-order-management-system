@@ -1660,6 +1660,27 @@ func TestCreateOrder_IdempotentReplayReturnsSameOrder(t *testing.T) {
 	}
 }
 
+// TestCreateOrder_IdempotentReplay_ReleasesExtraPreDeduct pins the idempotent
+// replay contract of the pre-deduct-fronted architecture (order_service.go:47-56,
+// :216-232; docs/changes/002-fix-gap-001-prededuct-timing.md "Attack 2").
+//
+// The contract is deliberately "pre-deduct first, then compensate", NOT "do not
+// pre-deduct again":
+//   - Redis pre-deduct is the first line of defence and runs BEFORE any MySQL
+//     access, so a replay cannot be recognised without first touching MySQL.
+//     Adding an idempotency lookup ahead of the pre-deduct would reintroduce the
+//     DB penetration that GAP-001 removed (and would let replay traffic hammer
+//     MySQL in a sold-out flash sale).
+//   - The replay therefore DOES pre-deduct a second time; the DB transaction then
+//     observes OrderAlreadyCreated, rolls back, and the extra reservation is
+//     released outside the transaction (idempotentReplay branch).
+//
+// Consequence for coverage: this single case also covers the "no duplicated
+// inventory occupation" property. Asserting len(preDeducts)==2 AND exactly one
+// release of that second orderID proves the replay's net reservation is zero —
+// i.e. inventory is not double-held, which is the property callers actually care
+// about. It does NOT claim "the second pre-deduct never happens"; do not add a
+// case asserting len(preDeducts)==1 without first changing the architecture.
 func TestCreateOrder_IdempotentReplay_ReleasesExtraPreDeduct(t *testing.T) {
 	testDB := setupTestDB(t)
 	guard := &fakeInventoryPreDeductor{applied: true}
@@ -1691,17 +1712,15 @@ func TestCreateOrder_IdempotentReplay_ReleasesExtraPreDeduct(t *testing.T) {
 	}
 	// Under pre-deduct fronting architecture:
 	// The second request pre-deducted at Redis, entered DB transaction, discovered OrderAlreadyCreated,
-	// and immediately released the extra pre-deduct on transaction rollback, ensuring zero inventory leak!
+	// and immediately released the extra pre-deduct on transaction rollback, ensuring zero inventory leak.
+	// The pair below (2 pre-deducts AND exactly 1 release of the second one) is what
+	// covers "no duplicated inventory occupation": net reservation of the replay is 0.
 	if len(guard.preDeducts) != 2 {
 		t.Fatalf("expected 2 redis pre-deduct attempts across both requests, got %d", len(guard.preDeducts))
 	}
 	if len(guard.releases) != 1 || guard.releases[0] != guard.preDeducts[1] {
 		t.Fatalf("expected 1 release for second pre-deducted order %d, got releases %v", guard.preDeducts[1], guard.releases)
 	}
-}
-
-func TestCreateOrder_IdempotentReplayDoesNotPreDeductRedisAgain(t *testing.T) {
-	TestCreateOrder_IdempotentReplay_ReleasesExtraPreDeduct(t)
 }
 
 func TestCreateOrder_SameIdempotencyKeyDifferentRequest_ReturnsConflict(t *testing.T) {
