@@ -21,20 +21,32 @@
 
 ## 2. product_inventories 商品库存表
 
-用途：保存每个商品当前库存。
+用途：保存每个商品的库存，采用「可用库存 + 锁定库存」三态模型。
 
 核心字段：
 
 - id：库存记录 ID
 - product_id：商品 ID
-- stock_quantity：当前库存数量
+- stock_quantity：**可用库存 / 可售库存**（Available Stock）——用户可立即下单扣减的现货库存
+- locked_quantity：**锁定库存 / 预占库存**（Locked / Reserved Stock）——**已被创建订单预占、处于待支付窗口内的在途库存**；尚未从物理库存中扣减，但**不可再售**
 - created_at / updated_at：创建和更新时间
+
+字段定义（与迁移 `migrations/00016_add_locked_quantity_to_product_inventories.sql` 一致）：
+
+```sql
+locked_quantity BIGINT NOT NULL DEFAULT 0 AFTER stock_quantity,
+CONSTRAINT chk_product_inventories_locked_quantity_non_negative CHECK (locked_quantity >= 0)
+```
 
 设计说明：
 
 1. product_id 使用唯一索引，保证一个商品只有一条库存记录
 2. stock_quantity 使用 check 约束，保证库存不能小于 0
-3. 当前库存以 product_inventories 为准，stock_logs 只作为变更记录
+3. locked_quantity 使用 check 约束（`>= 0`），保证锁定库存不能为负
+4. **库存三态守恒（ADR-003 §2.1.1）**：`总物理库存 = stock_quantity + locked_quantity`。
+   下单预占时 `stock_quantity -= Q` 且 `locked_quantity += Q`（**总物理库存不变**）；支付核销时 `locked_quantity -= Q`（物理出库）；取消 / 超时释放时 `stock_quantity += Q` 且 `locked_quantity -= Q`（归还，总量不变）。
+5. **状态迁移只能走原子 CAS**：`internal/dao/inventory_dao.go` 的 `ReserveInventory`（`:55`，预占）、`ReleaseLockedInventory`（`:72`，取消释放）、`ConsumeLockedInventory`（`:89`，支付核销）三条条件更新，**不得**在应用层读值再回写（GAP-007 的绝对值覆盖即此类竞态的实例）。
+6. 当前库存以 product_inventories 为准，stock_logs 只作为变更记录
 
 ## 3. stock_logs 库存流水表
 

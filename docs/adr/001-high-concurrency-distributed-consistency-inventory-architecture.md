@@ -1,7 +1,15 @@
 # ADR-001: 高并发低延迟与分布式最终一致性库存架构设计
 
 - **Title**: ADR-001: 高并发低延迟与分布式最终一致性库存架构设计
-- **Status**: Proposed
+- **Status**: Accepted
+  > **状态订正（`2026-10-22`，`ssot-scribe`）**：本行原为 `Proposed`，与 `docs/adr/README.md` 索引表所记的 `Accepted` **不一致**（同一份事实两处不同成熟度，违反 D4）。经实测复核，**改为 `Accepted`**，依据如下（**含两处与「已全部落地」不符的实测发现，须与本条合读**）：
+  > 1. **架构方向已落地并被生产代码遵循**：**决策一**（Redis 预扣前置 + 事务内零网络 IO）实测于 `internal/service/order_service.go:47-50`（预扣在 `:72` 的 `db.Transaction` **之前**）与 `:58` 的注释；**决策二**（原生原子增量、废黜绝对值覆盖）实测于 `internal/bizcache/inventory_stock_guard.go:88` / `:98` 的 `redis.call("INCRBY", …)`。
+  > 2. **四条关联 GAP 均已 `CLOSED`**：`GAP-001` / `GAP-002` / `GAP-005` / `GAP-007`（见 `docs/GAP台账.md`）。
+  > 3. **同批次 ADR 的既有约定**：`ADR-002` / `ADR-003` 文件头均为 `Accepted`（同日期 `2026-10-21`、同作者）。保持 `Proposed` 会与二者及索引表三处冲突。
+  > 4. ⚠️ **但本 ADR 实为四条决策，其中两条并未按原文落地**（**这不是「未实施完」，是闭环走了别的路径**——故一并留痕，**不得**因本行改 `Accepted` 而被读成「四条都已生效」）：
+  >    - **决策三的 TTL 部分（未落地）**：原文要求预扣凭证设 TTL（15 分钟 + 5 分钟冗余 = 20 分钟）。实测全仓 **无任何** `Expire` / `SetEx` / `TTL` 作用于 reservation 键；`internal/bizcache/inventory_stock_guard.go:74` 为 `redis.call("SET", KEYS[n + 1], cjson.encode(reservation))`——**无 `EX` 参数**。**但该决策要解决的 `GAP-005` 已 `CLOSED`**，其闭环用的是**状态无关的防御性释放**（决策三第 2 点），即 TTL 这条**未被采用**。
+  >    - **决策四（未落地）**：原文要求以 Redis `SET order:idempotency:{user_id}:{key} "PROCESSING" EX 30 NX` 做第一道互斥。实测 `SetNX` / `NX` / `PROCESSING` 在 `internal/`、`pkg/` **零命中**；实际幂等走 MySQL——`internal/dao/order_idempotency_key.go:18` 的 `clause.OnConflict{DoNothing: true}`，配合 `order_service.go:80-83` 把 `gorm.ErrRecordNotFound` 转成 `ErrOrderBeingCreated`。**该决策要解决的 `GAP-002` 同样已 `CLOSED`**（其 DoD 本就给了「当前读 **或** 前置分布式锁」两个选项，代码取了前者）。
+  > 5. **⇒ 待架构方裁定的开放项（不属本次 D4 订正，故不擅自改原文）**：决策三的 TTL 与决策四的 Redis 互斥**是被有意放弃，还是尚未实施**，本文档内无记录。二者若确已放弃，本 ADR 应按惯例补 `Superseded` / 修订说明；若仍需实施，则应转 `GAP-` 登记。**两条路都不该停在「无人知道」**——已上报总控，**由 `system-architect` 裁定**。
 - **Date**: 2026-10-21
 - **Deciders**: 分布式系统架构师 (`system-architect`), SRE 稳定性专家 (`sre-operator`), 后端开发专家 (`backend-dev`), 数据流工程师 (`data-engineer`)
 - **Target System**: 订单与库存系统 (`go-order-management-system`)
