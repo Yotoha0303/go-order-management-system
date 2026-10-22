@@ -170,8 +170,32 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The resolved Playwright version determines the browser revision, and
+      # `playwright` is pinned exactly in package.json ("1.59.1", not a range),
+      # so it is a reproducible cache key. Deliberately NOT hashFiles on the
+      # lockfile: that would miss on any unrelated dependency bump and cost a
+      # full re-download.
+      - name: Resolve Playwright version
+        id: playwright
+        run: |
+          version=$(node -p "require('./node_modules/playwright/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       # vitest runs in browser mode (vite.config.ts test.browser.provider=playwright),
       # so the Chromium binary must exist before the test step.
+      #
+      # Why the cache: on run 39767723671 the download took 781s while the actual
+      # browser tests took 12s - 94% of a 13m55s job was fetching Chromium.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
+
+      # This step still runs on a cache hit, on purpose. `--with-deps` also
+      # installs the OS packages, and playwright skips the download when the
+      # browser is already in the registry directory. Skipping the whole step on
+      # a hit would silently drop the apt dependencies.
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
