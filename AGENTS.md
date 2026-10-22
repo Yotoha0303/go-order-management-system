@@ -72,52 +72,58 @@
 > **本节的读数不随 `HEAD` 移动，而是钉在「引入本节的提交」上。** 规矩三条：
 > 1. **采集时点 = 该次采集所对应的提交**，**不是**「命令跑完的那一刻」。二者在时序上**必然差一个提交**（写完本节要提交，提交后 HEAD 就变了）；
 > 2. **`HEAD` 记「本节的父提交」**——即**采集时**的 HEAD，**不是**包含本节的提交号。**「引入本节的提交」必然晚于本节所记 `HEAD`，这是定义使然，不是错误**；
-> 3. **判据**：本节所记 `HEAD` 与 `git rev-parse HEAD` 的差值，**应当恰为「引入本节的那 1 个提交」**。若差值 **> 1**，说明**有人提交了别的东西却没重采本节** —— 那才是漂移，**须重采**；差值 **= 1** 时**不要重采**（重采只会再产生一个提交，无限追下去）。
+> 3. **判据**：本节所记锚点与 `git rev-parse <锚点>` 的差值，**应当恰为「引入本节的那 1 个提交」**。若差值 **> 1**，说明**有人提交了别的东西却没重采本节** —— 那才是漂移，**须重采**；差值 **= 1** 时**不要重采**（重采只会再产生一个提交，无限追下去）。
 >
-> **本节的引入提交**：`aac6908`（`docs(ledger): close out the audit items and record the CI evidence`）；其**父提交** `4d37f29` 是上一轮的引入提交。故**本节所记 `HEAD` 必然 ≠ 当前 `HEAD`**——**这是设计，不是过期**。
+> **本次锚点改为主干**（`2026-10-22`，PR #17 合并后）：**锚点 = `adc1f21`（`origin/main` 的 merge commit）**。
+> **理由**：本节此前锚在特性分支的提交上；**分支已合并**，其历史已成为 `main` 的一部分，**再锚在分支提交上会让本节描述一个已不存在的工作线**。
+> **上一轮锚点**：`aac6908`（其父 `4d37f29` 是再上一轮）。**锚点换线时须写明换线原因**——否则下一轮无法判断差值 > 1 是漂移还是换线。
 
-* **采集时点**：`2026-10-22T10:44:43Z`（UTC）——**对应提交见下方「本次采集所对应的提交」**
-* **Git 分支**：`fix/issue-14-order-module`（upstream = `origin/fix/issue-14-order-module`，**领先 0 个提交**，即已全部推送）
-* **本次采集所对应的提交**：`aac6908d062cd92afc29ad4bf78ece07e8895da8`（短号 `aac6908`）
-  > ⚠️ **「引入本节的提交」是 `aac6908` 的**下一个**提交**（尚未存在），其号必然晚于本行所记——**按上方第 2 条，这是设计而非过期**。
-  > 若你是下一轮采集者：**先看差值**（`git rev-list --count aac6908..HEAD`）。**差 1 ⇒ 不必重采**（那 1 个提交就是引入本节的）；**差 > 1 ⇒ 必须重采**，并把上面这行换成你的提交号。
-* **分支基底**：`4fa68f9`（即当时 `main` 的 HEAD）；**本分支已在其上提交 11 个提交**
-  > ✅ **issue #14 的修复已提交并已推送**——不再是「未提交」状态。改动分 **11** 个提交落盘，
-  > 已推到 `origin/fix/issue-14-order-module`，并开了 PR [#17](https://github.com/Yotoha0303/go-order-management-system/pull/17)。
-  > **PR #17 的 CI 已连续五轮全绿**（run `39732018029` @ `6fa11f8`、run `39733467897` @ `a6439d2`、
-  > run `39734691195` @ `cb3c4ac`、run `39758849047` @ `4d37f29`、run `39761963731` @ `aac6908`），五轮均为
-  > `Frontend` + `Test, Vet, Validate, Build` 双作业 pass
-  > （第五轮实测：`Frontend` **64s** / `Test, Vet, Validate, Build` **239s**；第四轮 `51s` / `3m31s`）。
-  > **跳过断言读数**：`passes=367 skips=0`（run `39758849047` @ `4d37f29` **与** run `39761963731` @ `aac6908` 两次均为该值，`gh run view --log` 实取）。
-  > ⚠️ **`passes` 是随提交变化的量**——`358` @ `a6439d2` → `367` @ `4d37f29`。**引用时必须带 run id 与 headSha。**
-  > ⚠️ **但 PR 尚未合并**——故 `main` 上的 CI **仍然一次未绿**（见台账 `GAP-020`）。
-  > **合并后必须重新采集本节**：届时分支会回到 `main`、提交数与受管文件数会变，且 GAP-020 的
-  > 「`main` 无绿」前提将被 PR 的绿 run 打破——**这三项都会同时过期**。
-* **历史提交数**：`59`
+* **采集时点**：`2026-10-22T12:05:06Z`（UTC）——**对应提交见下方「本次采集所对应的提交」**
+* **主干**：`origin/main` = **`adc1f216729ae7163f40f485f8d63b5bfb7e26bb`**（短号 `adc1f21`）
+  > ✅ **PR [#17](https://github.com/Yotoha0303/go-order-management-system/pull/17) 已合并** —— **以 merge commit 合并**（`adc1f21` **父数 = 2**：`4fa68f9` + `e37da30`），**13 个提交完整保留**在 `main` 历史中（**非 squash**）。
+  > 实测：`git rev-list --count 4fa68f9..adc1f21` = **14**（13 个分支提交 + 1 个 merge commit）。
+* **本次采集所对应的提交**：`adc1f216729ae7163f40f485f8d63b5bfb7e26bb`（短号 `adc1f21`）
+  > ⚠️ **「引入本节的提交」是 `adc1f21` 的**下一个**提交**（尚未存在），其号必然晚于本行所记——**按上方第 2 条，这是设计而非过期**。
+  > 若你是下一轮采集者：**先看差值**（`git rev-list --count adc1f21..origin/main`）。**差 1 ⇒ 不必重采**；**差 > 1 ⇒ 必须重采**，并把上面这行换成你的提交号。
+* **本地检出（⚠️ 与主干不一致，如实记录）**：本地当前分支仍是 **`fix/issue-14-order-module` @ `e37da30`**（**领先 `origin/main` 0 个提交、落后 1 个**——即缺 merge commit `adc1f21`）。
+  **本地 `main` ref 亦陈旧**（停在 `4fa68f9`）。**故本地 `git rev-parse main` 与 `origin/main` 不等** —— **任何以主干为口径的读数必须显式写 `origin/main`**，写 `main` 会读到旧值。
+  **这不是缺陷，是未 `git fetch` 的检出状态**；但**它正是「静默地错」的一个实例**：`git log main` 会让人以为合并没发生。
+* **分支基底**：`4fa68f9`（合并前 `main` 的 HEAD）；主干自其起共 **14** 个提交（含 merge）。
+* **CI（主干，`event=push`）**：**run `39774132552` @ `adc1f21` → `success`**（`2026-10-22T11:54:33Z`）
+  > **`main` 首次转绿**：该次 green 之前**连续 `15` 次 `failure`**；**上一次 green = `28844933317` @ `2026-07-07T05:56:15Z`，间隔约 `107` 天（3.5 个月）**。
+  > 跳过断言读数：**`passes=367 skips=0`**（`gh run view --log` 实取）；作业耗时 `Test, Vet, Validate, Build` **386s** / `Frontend` **63s**。
+  > ⚠️ **`passes` 是随提交变化的量**——`358` @ `a6439d2` → `367` @ `4d37f29` → `367` @ `adc1f21`。**引用时必须带 run id 与 headSha。**
+  > ⚠️ **「首次绿」只满足 `GAP-020` 的 DoD ①**：该条 DoD ③④ 仍未满足，且**原文写「连续通过」，当前只有 1 次** —— **`GAP-020` 仍为 `IN_PROGRESS`**（见台账）。
+* **历史提交数**：`62`（`git rev-list --count origin/main`）
 * **代码与受管文件数 (`git ls-files`)**：`440`
-* **当前活跃 GAP 数量**：`17` 项（`GAP-012`–`GAP-014`、`GAP-016`–`GAP-020` 与 `GAP-022`–`GAP-023`、`GAP-025`–`GAP-031`）
+* **当前活跃 GAP 数量**：`14` 项（`GAP-016`–`GAP-020`、`GAP-022`–`GAP-023`、`GAP-025`–`GAP-031`）
   * **「活跃」定义**：台账状态**非 `CLOSED`** 的条目（即「未解除」）。
-  * **台账总数**：`30` 项；其中 **13** 项为 `CLOSED`（`GAP-001`–`GAP-011` 共 **11** 项，**加本轮的 `GAP-015` / `GAP-024`**），其余 **17** 项为 `IN_PROGRESS`。
+  * **台账总数**：`30` 项；其中 **16** 项为 `CLOSED`（`GAP-001`–`GAP-014` 共 **14** 项，加 `GAP-015` / `GAP-024`），其余 **14** 项为 `IN_PROGRESS`。
   * **`GAP-021` 不在表内**：该编号已撤销（经复核为误判），**编号保留、不复用**，台账中仅留撤销说明。
-  * **关联 Issue 分布**：`GAP-012`–`GAP-015` 关联 `#14`；`GAP-016` 关联 `#15`；`GAP-017` 关联 `#16`；`GAP-026` 关联 `#18`；`GAP-027` 关联 `#19`；**`GAP-028` 关联 `#20`；`GAP-029` / `GAP-030` / `GAP-031` 三条合并关联 `#21`**；`GAP-018`–`GAP-025` 尚无 Issue。
-  * **`GAP-015` / `GAP-024` 本轮转 `CLOSED`**（**总控推荐，用户可否决**）：依据为**第三轮门禁裁决「放行合并」**，附条件「裁决原文须落盘到本仓」——该条件已由 `docs/GAP台账.md` 的 `GAP-020` 方法论**第 6 条**（`:424`）与**三轮裁决表「第三轮」行**（`:431`）满足。**其余各条（`GAP-012`/`013`/`014`/`016`/`017`/`020`）一律保持 `IN_PROGRESS`。**
+  * **关联 Issue 分布**：`GAP-012`–`GAP-015` 关联 `#14`；`GAP-016` 关联 `#15`；`GAP-017` 关联 `#16`；`GAP-026` 关联 `#18`；`GAP-027` 关联 `#19`；`GAP-028` 关联 `#20`；`GAP-029` / `GAP-030` / `GAP-031` 三条合并关联 `#21`；`GAP-018`–`GAP-025` 尚无 Issue。
+  * **`GAP-012` / `GAP-013` / `GAP-014` / `GAP-015` / `GAP-024` 已转 `CLOSED`**（**总控依裁决作出的状态翻转，用户可否决**）：依据为**第四轮门禁裁决**（`GAP-012/013/014`）与**第三轮**（`GAP-015` / `GAP-024`），载体为台账 `GAP-020` 方法论**第 6 条的裁决表**对应行。**其余各条一律保持 `IN_PROGRESS`。**
+  * **`GAP-017` DoD ② 经实测确定未满足**（`main` 无分支保护 ⇒ 前端作业未被强制）；**解除需仓外平台动作**，属「待执行指令」，**AI 不能代办**。
+  * **`GAP-020` DoD ① 已满足**（`main` 首次转绿）**，但 DoD ③④ 未满足**，且 DoD ① 原文写「**连续**通过」而当前只有 1 次 —— **保持 `IN_PROGRESS`**。
   * **`GAP-029`–`GAP-031`（04 / 05 / 06–10 环）**：**阻断上生产，不阻断合并**——用户已裁定 04/05 不作为 PR #17 的合并前提，但**「不作为合并前提」不等于「不存在」**，故照常登记、照常计入活跃数。
 
 **本节读数的复核命令**（在工作区根执行，实测口径 D1）：
 
 | 读数 | 命令 |
 | :--- | :--- |
-| 分支 / 提交 | `git rev-parse --abbrev-ref HEAD` · `git rev-parse --short HEAD` |
-| **本节是否漂移** | `git rev-list --count aac6908..HEAD`（**= 1 ⇒ 正常，不必重采**；**> 1 ⇒ 须重采**——见本节开头的「采集口径」） |
-| 自基底起的提交数 | `git rev-list --count 4fa68f9..HEAD` |
-| 是否已推送 | `git rev-list --count 'origin/fix/issue-14-order-module..HEAD'`（0 = 已全部推送） |
-| 历史提交数 | `git rev-list --count HEAD` |
-| 受管文件数 | `(git ls-files \| Measure-Object -Line).Lines`（**注意**：`Measure-Object -Line` 计的是**非空行**；数文件请用 `(git ls-files).Count`） |
+| **⚠️ 取哪条线（先读这行）** | 本节**一律以主干为准**：`origin/main`。**本地 `main` ref 与 `HEAD` 都可能不是主干**（本地检出仍在特性分支、本地 `main` ref 陈旧）——**用 `HEAD` 会读到分支值**。下表凡涉及主干的读数**均显式写 `origin/main`**。 |
+| 主干 HEAD | `git rev-parse --short origin/main` · 全 40 位：`git rev-parse origin/main` |
+| 本地检出（仅供对照，**不是主干**） | `git rev-parse --abbrev-ref HEAD` · `git rev-parse --short HEAD` |
+| **本节是否漂移** | `git rev-list --count adc1f21..origin/main`（**= 1 ⇒ 正常，不必重采**；**> 1 ⇒ 须重采**——见本节开头的「采集口径」） |
+| 自基底起的提交数 | `git rev-list --count 4fa68f9..origin/main` |
+| 主干历史提交数 | `git rev-list --count origin/main` |
+| 主干 CI | `gh run list --branch main --limit 5 --json databaseId,conclusion,headSha,event`（**注意看 `event=push`**） |
+| 分支保护 / required check | `gh api repos/Yotoha0303/go-order-management-system/branches/main/protection`（**404 + `"Branch not protected"` = 未设保护；403 才是无法判定**） |
+| 受管文件数 | `(git ls-files).Count`（**注意**：`Measure-Object -Line` 计的是**非空行**，不是文件数——用错口径会让数字偏小且**不报错**） |
 | 未提交改动数 | `git status --porcelain`（行数 = 已改 + 未跟踪；`^ ?M` 计已改，`^\?\?` 计未跟踪，`^[AMD]` 计暂存） |
 | 活跃 GAP 数 | 取 `docs/GAP台账.md`「质量缺口登记表」中**状态列非 `CLOSED`** 的行数 |
 | 台账总数 | 取同一张表的**全部数据行数**（撤销的编号不占行） |
-| CI 是否绿 | `gh run list --branch <branch> --limit 5 --json databaseId,conclusion,headSha` |
 | 采集时点 | `[DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")` |
+| **分支侧读数（合并后仅存档用）** | `git rev-list --count 'origin/fix/issue-14-order-module..HEAD'`（合并后此线已并入主干，**不再作为本节口径**） |
 
 ---
 
