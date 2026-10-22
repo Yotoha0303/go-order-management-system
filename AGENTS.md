@@ -67,30 +67,38 @@
 
 ## 4. 实测基线与当前状态
 
-* **采集时点**：`2026-10-22T05:20:33Z`（UTC）
-* **Git 分支**：`fix/issue-14-order-module`
-* **当前 HEAD（= 分支基底，全 40 位）**：`4fa68f999f7dba431aa641d21afbad06890dc3bf`（短号 `4fa68f9`）
-  > ⚠️ **本次 issue #14 修复尚未提交**——`4fa68f9` 是**修复所在分支的基底**，
-  > 不是修复完成后的 HEAD。工作树现有 **61** 处未提交改动（**43** 个已跟踪文件被改 + **18** 个新增未跟踪文件，**暂存区为空**），
-  > 故本节的**全部读数**（含受管文件数与 GAP 计数）都是**未落盘状态下的快照**，**不是修复完成后的值**。
-  > **修复提交落地后必须重新采集本节**——届时分支、提交数、受管文件数、台账状态会同时变化。
-* **历史提交数**：`48`
-* **代码与受管文件数 (`git ls-files`)**：`421`（该口径**只计已跟踪文件**，故**不含**上列 18 个未跟踪新增文件）
-* **当前活跃 GAP 数量**：`6` 项（`GAP-012` / `GAP-013` / `GAP-014` / `GAP-015` / `GAP-016` / `GAP-017`，均登记于 `docs/GAP台账.md`）
+* **采集时点**：`2026-10-22T06:27:12Z`（UTC）
+* **Git 分支**：`fix/issue-14-order-module`（upstream = `origin/fix/issue-14-order-module`，**领先 0 个提交**，即已全部推送）
+* **当前 HEAD（全 40 位）**：`a6439d24683cc4472a999bedaa53f3e6e157426d`（短号 `a6439d2`）
+* **分支基底**：`4fa68f9`（即当时 `main` 的 HEAD）；**本分支已在其上提交 8 个提交**
+  > ✅ **issue #14 的修复已提交并已推送**——不再是「未提交」状态。改动分 **8** 个提交落盘，
+  > 已推到 `origin/fix/issue-14-order-module`，并开了 PR [#17](https://github.com/Yotoha0303/go-order-management-system/pull/17)。
+  > **PR #17 的 CI 已连续两轮全绿**（run `39732018029` @ `6fa11f8`、run `39733467897` @ `a6439d2`），
+  > 两轮均为 `Frontend` + `Test, Vet, Validate, Build` 双作业 pass。
+  > ⚠️ **但 PR 尚未合并**——故 `main` 上的 CI **仍然一次未绿**（见台账 `GAP-020`）。
+  > **合并后必须重新采集本节**：届时分支会回到 `main`、提交数与受管文件数会变，且 GAP-020 的
+  > 「`main` 无绿」前提将被 PR 的绿 run 打破——**这三项都会同时过期**。
+* **历史提交数**：`56`
+* **代码与受管文件数 (`git ls-files`)**：`439`
+* **当前活跃 GAP 数量**：`13` 项（`GAP-012`–`GAP-020` 与 `GAP-022`–`GAP-025`，均登记于 `docs/GAP台账.md`）
   * **「活跃」定义**：台账状态**非 `CLOSED`** 的条目（即「未解除」）。
-  * **台账总数**：`17` 项（`GAP-001` 至 `GAP-017`）；其中 `GAP-001`–`GAP-011` 共 **11** 项为 `CLOSED`，其余 **6** 项为 `IN_PROGRESS`。
-  * **关联 Issue 分布**：`GAP-012`–`GAP-015` 关联 `#14`；`GAP-016` 关联 `#15`；`GAP-017` 关联 `#16`。
+  * **台账总数**：`24` 项；其中 `GAP-001`–`GAP-011` 共 **11** 项为 `CLOSED`，其余 **13** 项为 `IN_PROGRESS`。
+  * **`GAP-021` 不在表内**：该编号已撤销（经复核为误判），**编号保留、不复用**，台账中仅留撤销说明。
+  * **关联 Issue 分布**：`GAP-012`–`GAP-015` 关联 `#14`；`GAP-016` 关联 `#15`；`GAP-017` 关联 `#16`；`GAP-018`–`GAP-025` 尚无 Issue。
 
 **本节读数的复核命令**（在工作区根执行，实测口径 D1）：
 
 | 读数 | 命令 |
 | :--- | :--- |
 | 分支 / 提交 | `git rev-parse --abbrev-ref HEAD` · `git rev-parse --short HEAD` |
+| 自基底起的提交数 | `git rev-list --count 4fa68f9..HEAD` |
+| 是否已推送 | `git rev-list --count 'origin/fix/issue-14-order-module..HEAD'`（0 = 已全部推送） |
 | 历史提交数 | `git rev-list --count HEAD` |
-| 受管文件数 | `(git ls-files \| Measure-Object -Line).Lines` |
+| 受管文件数 | `(git ls-files \| Measure-Object -Line).Lines`（**注意**：`Measure-Object -Line` 计的是**非空行**；数文件请用 `(git ls-files).Count`） |
 | 未提交改动数 | `git status --porcelain`（行数 = 已改 + 未跟踪；`^ ?M` 计已改，`^\?\?` 计未跟踪，`^[AMD]` 计暂存） |
 | 活跃 GAP 数 | 取 `docs/GAP台账.md`「质量缺口登记表」中**状态列非 `CLOSED`** 的行数 |
-| 台账总数 | 取同一张表的**全部数据行数**（`GAP-001` 起连续编号） |
+| 台账总数 | 取同一张表的**全部数据行数**（撤销的编号不占行） |
+| CI 是否绿 | `gh run list --branch <branch> --limit 5 --json databaseId,conclusion,headSha` |
 | 采集时点 | `[DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")` |
 
 ---
