@@ -192,12 +192,19 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
 
-      # This step still runs on a cache hit, on purpose. `--with-deps` also
-      # installs the OS packages, and playwright skips the download when the
-      # browser is already in the registry directory. Skipping the whole step on
-      # a hit would silently drop the apt dependencies.
+      # This step still runs on a cache hit, on purpose: playwright skips the
+      # download when the browser is already in the registry directory.
+      #
+      # No `--with-deps`. Measured on run 39788310440: the cache hit in 4s, the
+      # browser was restored from it, and this step still took 654s - because
+      # `--with-deps` shells out to apt for the Chromium system libraries, which
+      # the browser cache does not cover. The GitHub ubuntu-latest image already
+      # ships those libraries, so apt was re-fetching what the image has.
+      #
+      # If this step ever fails on a missing .so, put `--with-deps` back. That
+      # costs ~10 minutes of apt, not correctness.
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       # `tsc -b` (not `tsc --noEmit`): fronted/tsconfig.json is solution-style
       # ("files": [] + references), so a bare `tsc --noEmit` checks 0 files and
