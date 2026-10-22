@@ -243,7 +243,13 @@ DB_SLOW_THRESHOLD=200ms
 DB_LOG_LEVEL=warn
 JWT_SECRET=replace-with-at-least-32-random-characters
 JWT_EXPIRE_HOURS=24
+# Redis: use REDIS_URL for managed/cloud endpoints (rediss:// enables TLS),
+# or the discrete REDIS_ADDR/REDIS_USERNAME/REDIS_PASSWORD/REDIS_TLS set.
+REDIS_URL=
+REDIS_ADDR=
+REDIS_USERNAME=
 REDIS_PASSWORD=
+REDIS_TLS=
 RABBITMQ_URL=amqp://order_app:order_dev_password@127.0.0.1:5672/
 ORDER_TIMEOUT_DELAY=30m
 INVENTORY_RECONCILE_ENABLED=true
