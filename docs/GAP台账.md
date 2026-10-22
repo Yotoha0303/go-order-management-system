@@ -30,18 +30,22 @@
 | **GAP-012** | P1 | 订单/接口契约 | 订单主键为 63 位 Snowflake 大整数，JSON 以原生数字输出，前端 `JSON.parse` 精度截断导致详情/支付/完成/取消全部 404 | [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14) | IN_PROGRESS | `backend-dev` / `frontend-dev` |
 | **GAP-013** | P1 | 订单/前端状态 | 创建订单表单行以数组 index 作 key 致 Radix Select 状态残留；且失败后 `pendingSubmission` 未清空，幂等 Key 跨提交复用；缺显式重置入口 | [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14) | IN_PROGRESS | `frontend-dev` |
 | **GAP-014** | P1 | 配置/运行 | 云端 Redis 未生效：`RedisConfig` 无 password/TLS 字段，`pkg/redis` 仅支持明文 TCP，云托管 `rediss://` 无法握手，架构首道预扣防线与商品缓存被静默旁路 | [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14) | IN_PROGRESS | `backend-dev` / `sre-operator` |
-| **GAP-015** | P2 | 数据/接口契约 | `StockLog.BizID` 承载订单 Snowflake 主键（`order_service.go:188,557` 赋 `&order.ID`）却以 JSON 裸数字输出（`stock_log.go:20`），管理员库存流水页 `#{log.biz_id}` 显示被截断的订单号——GAP-012 的同类未收口面 | [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14) | IN_PROGRESS | `backend-dev` / `frontend-dev` |
-| **GAP-016** | P1 | CI/门禁 | **（库名已修；DoD ①②③ 均已满足）** `4fa68f9` 的 `ci.yml:22` 库名含连字符，被 `test_helper_test.go:95` 的 `^[a-zA-Z0-9_]+$` 拒绝（`:101` `t.Fatalf`）⇒ 当时 CI 上 `internal/service` 必然全红。**残余**：本机 `RUN_MYSQL_TEST` 未设时仍全 SKIP。② 已由 run `39733467897`（`passes=358 skips=0`）与 `39758849047`（`passes=367 skips=0`）满足；③ 载体已建（`internal/service/qa_database_name_guard_test.go`，`4d37f29`）；但门禁裁决仍阻断 | [#15](https://github.com/Yotoha0303/go-order-management-system/issues/15) | IN_PROGRESS | `qa-validator` / `backend-dev` |
-| **GAP-017** | P1 | CI/门禁 | **（前端作业已加，CI 已连续四轮 pass）** `4fa68f9` 的 `.github/workflows/ci.yml` 无任何前端作业，GAP-013 全部前端用例在 PR 上不执行 ⇒ 违反 `AGENTS.md` §2 03 环「新建用例 100% 纳入 CI 矩阵」；**残余**：该作业是否为 required check 未验证 | [#16](https://github.com/Yotoha0303/go-order-management-system/issues/16) | IN_PROGRESS | `sre-operator` / `frontend-dev` |
+| **GAP-015** | P2 | 数据/接口契约 | `StockLog.BizID` 承载订单 Snowflake 主键（`order_service.go:188,557` 赋 `&order.ID`）却以 JSON 裸数字输出（`stock_log.go:20`），管理员库存流水页 `#{log.biz_id}` 显示被截断的订单号——GAP-012 的同类未收口面 | [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14) | CLOSED | `backend-dev` / `frontend-dev` |
+| **GAP-016** | P1 | CI/门禁 | **（库名已修；DoD ①②③ 均已满足；④ 见下方处置）** `4fa68f9` 的 `ci.yml:22` 库名含连字符，被 `test_helper_test.go:95` 的 `^[a-zA-Z0-9_]+$` 拒绝（`:101` `t.Fatalf`）⇒ 当时 CI 上 `internal/service` 必然全红。**残余**：本机 `RUN_MYSQL_TEST` 未设时仍全 SKIP。② 已由 run `39733467897`（`passes=358 skips=0`）与 `39758849047`（`passes=367 skips=0`）满足；③ 载体已建（`internal/service/qa_database_name_guard_test.go`，`4d37f29`）**且变异有效性已实测**；**④ 判为「语义一致、形式不同」**（理由见条目）；门禁裁决仍阻断 | [#15](https://github.com/Yotoha0303/go-order-management-system/issues/15) | IN_PROGRESS | `qa-validator` / `backend-dev` |
+| **GAP-017** | P1 | CI/门禁 | **（前端作业已加，CI 已连续五轮 pass）** `4fa68f9` 的 `.github/workflows/ci.yml` 无任何前端作业，GAP-013 全部前端用例在 PR 上不执行 ⇒ 违反 `AGENTS.md` §2 03 环「新建用例 100% 纳入 CI 矩阵」；**残余**：该作业是否为 required check 未验证 | [#16](https://github.com/Yotoha0303/go-order-management-system/issues/16) | IN_PROGRESS | `sre-operator` / `frontend-dev` |
 | **GAP-018** | P2 | 数据/接口契约 | 商品主键 `Product.ID` 为**自增** bigint，仍以 JSON 裸数字输出（`product.go:11`），与订单侧 `Order.ID` 的字符串约定不一致；当前不是缺陷（远未及 2^53），但商品 ID 一旦改为 Snowflake 即重演 GAP-012 | —（待建 Issue） | IN_PROGRESS | `data-engineer` / `backend-dev` |
 | **GAP-019** | P1 | 文档/编号 SSOT | `docs/changes/` 中编号 `004` 与 `005` **各被两个不同文件占用**（`004-fix-gap-005-…` + `004-support-mysql-tls-connection.md`；`005-fix-gap-003-…` + `005-support-cors-and-spa-rewrites.md`）⇒ 本仓任何「编号唯一」的说法都是**假守卫** | —（待建 Issue） | IN_PROGRESS | `ssot-scribe` |
 | **GAP-020** | **P0** | CI/门禁 | **`main` 的 CI 自 `2026-07-07T05:56:15Z` 之后连续 15 次全红、无一次绿**（最近 9 次集中在 `2026-10-21`）。而 `GAP-003/004/006/008/009/010` 均标 `CLOSED`、闭环叙述含「门禁裁决」——**这些 `CLOSED` 从未经过 CI 验证**，其中 5 项的变更记录里自带 `--- SKIP` 日志 | —（待建 Issue） | IN_PROGRESS | `sre-operator` / `ssot-scribe` |
 | **GAP-022** | P3 | 测试质量 | `TestCreateOrder_MultipleItemsProcessedByProductID`（`order_service_test.go:406`）用「种子顺序」隐式假定 `productA.ID < productB.ID`，断言 `items[0]=A`。生产侧**确实**按 `ProductID` 排序（`order_service.go:250-254`、`:595-596`），故当前成立；但商品主键一旦改为非单调（如 Snowflake，见 GAP-018），断言会在**实现仍正确**的情况下失败 | —（待建 Issue） | IN_PROGRESS | `qa-validator` |
 | **GAP-023** | P3 | 测试质量 | 同一用例内用 `Order("id ASC")` 读回 items / stock_logs（`order_service_test.go:425`、`:436`），隐含「自增 `id` 顺序 = 处理顺序」；把**排序契约**押在实现细节上，改批量插入或改主键生成即失效 | —（待建 Issue） | IN_PROGRESS | `qa-validator` |
-| **GAP-024** | P2 | 测试质量 | **（已由 `4d37f29` 处置：空壳用例已删除）** 原 `TestCreateOrder_IdempotentReplayDoesNotPreDeductRedisAgain`（`:1703`）函数体只有一行转调 `…_ReleasesExtraPreDeduct`（`:1663`），而后者断言「重放**会再次**预扣 2 次并释放 1 次」——**用例名与断言语义相反**，且同一逻辑被执行两遍 | —（待建 Issue） | IN_PROGRESS | `qa-validator` |
+| **GAP-024** | P2 | 测试质量 | **（已由 `4d37f29` 处置：空壳用例已删除）** 原 `TestCreateOrder_IdempotentReplayDoesNotPreDeductRedisAgain`（`:1703`）函数体只有一行转调 `…_ReleasesExtraPreDeduct`（`:1663`），而后者断言「重放**会再次**预扣 2 次并释放 1 次」——**用例名与断言语义相反**，且同一逻辑被执行两遍 | —（待建 Issue） | CLOSED | `qa-validator` |
 | **GAP-025** | P3 | 工具链/假信号 | `internal/service` 下 **11 个**文件在工作树为 CRLF（`git ls-files --eol` 实测，其中 1 个还是 `w/mixed`），`gofmt -l` 把它们**全部**列出；但索引中这些文件**全是 `i/lf`**，且 LF 版本经 `gofmt -l` 实测**干净**——即 `gofmt -l` 在本机输出的是**行尾符噪声，不是格式缺陷**，开发者无法用它判断真实格式问题。CI 不含 `gofmt` 步骤 | —（待建 Issue） | IN_PROGRESS | `ssot-scribe` / `qa-validator` |
 | **GAP-026** | P2 | 配置/运行 | **（c）推断，未实测运行期行为**：`compose.yml` 三处库名默认值 `go-order-management-system` **含连字符**（`:29` / `:64` / `:125`），与 `ci.yml:25` 刚因同一约束改成下划线形态的情形**形态不一致**；`ci.yml:22-24` 注释明写连字符是**故意**被 `safeDatabaseName`（`test_helper_test.go:95`）拒绝的（它要拼进 `CREATE DATABASE`）。CI 侧是**硬防线**，compose 侧**毫无防护**——migrate 容器是否 `exit 0` 无任何机械判据 | [#18](https://github.com/Yotoha0303/go-order-management-system/issues/18) | IN_PROGRESS | `sre-operator` / `backend-dev` |
 | **GAP-027** | P2 | 测试/门禁 | `AGENTS.md` §2 03 环要求「覆盖率**配置阈值**」，而**两栈均不存在**：全仓 `git grep -i thresholds` **零命中**、`.github/workflows/` 内 `git grep -i cover` **零命中**；Go 侧 `make coverage` 只产 `coverage.out`（`Makefile:181-182`）、前端 `vite.config.ts:75-85` 的 `coverage` 块**只有 `include`/`exclude`、无 `thresholds`**，`package.json:18` 的 `test:coverage` **不在 CI**。即该准出条件**从未被持有，也从未被登记** | [#19](https://github.com/Yotoha0303/go-order-management-system/issues/19) | IN_PROGRESS | `qa-validator` / `sre-operator` |
+| **GAP-028** | P2 | 测试/门禁 | `qa_database_name_guard_test.go:259` 的 AST 钉住断言 `len(rejectCalls) != 1 \|\| rejectCalls[0] != "Fatalf"`——`rejectCalls` 由 `qaIsTestingCall` **收集该分支内一切 `t.<method>()` 调用**（`:247-248`）。故只要在该分支加一句 `t.Logf` / `t.Helper` / `t.Errorf`，`rejectCalls` 即变 `["Fatalf","Logf"]` ⇒ **误报失败**。属「**误报的判据比没有判据更糟**」：它会把人推向删掉这条钉住 | [#20](https://github.com/Yotoha0303/go-order-management-system/issues/20) | IN_PROGRESS | `qa-validator` |
+| **GAP-029** | P1 | 构建/发布（**04 环**） | **04 环在本仓无任何对应物**：`AGENTS.md` §2 该环准出为「镜像**不可变 Digest** + 运行时断言 `REVISION == Git HEAD`」。实测全仓 `git grep -iE 'REVISION\|@sha256\|digest'` **零命中**（唯一命中 `LICENSE:43` 的英文单词 "revisions"，非制品）；`Dockerfile:14/36/50` 三个 `FROM` **全部是可变 tag**（`${GO_IMAGE}` / `${RUNTIME_IMAGE}` → `golang:1.25.7-alpine` / `alpine:3.22`，见 `compose.yml:18-19`）；`compose.yml:60/75/90` 的 mysql/redis/rabbitmq 亦为可变 tag。**无 digest 固定、无 REVISION 断言** | [#21](https://github.com/Yotoha0303/go-order-management-system/issues/21) | IN_PROGRESS | `sre-operator` / `sec-auditor` |
+| **GAP-030** | P1 | 部署（**05 环**） | **05 环准出为「部署脚本全链路幂等 + 配置与环境变量双向对齐无残留」**，本仓两半均无判据：`deploy.sh`（**451 行**）未见幂等自检（无「连续执行无状态突变」的断言），仅 `:216` 的 `compose up -d --build --wait`；**配置双向对齐**这一半只靠 `AGENTS.md` §2 的 `docker compose config -q`（**纯语法校验，不执行任何容器**，`Makefile:189-190`）。**注意**：`GAP-026`（compose 三处库名含连字符）是**这半边的一个具体面**，**不得互相结掉**——库名只是配置对齐里的一条 | [#21](https://github.com/Yotoha0303/go-order-management-system/issues/21) | IN_PROGRESS | `sre-operator` / `backend-dev` |
+| **GAP-031** | P1 | 观测/排障/恢复/复盘/自动化（**06–10 环**） | **06–10 环在本仓无任何对应物**（合并为一条，按裁决口径）。实测：`alertmanager` **零命中**；`severity` / `rto` / `rpo` **仅在散文里出现**（`docs/adr/003-*.md:35` 一处提到 Alertmanager 无法感知漂移——**是问题陈述，不是制品**）；`git ls-files` 过滤 `prometheus\|alertmanager\|grafana\|dashboard\|runbook\|slo\|sli` **零制品命中**（`fronted/src/features/order-inventory/dashboard.tsx` 是**业务页面**，与 SRE 仪表盘无关）；过滤 `drill\|failover\|backup\|restore\|chaos` **零命中** ⇒ **无停机演练、无 RTO/RPO 实测、无 Runbook、无告警规则、无复盘模板、无定时归档** | [#21](https://github.com/Yotoha0303/go-order-management-system/issues/21) | IN_PROGRESS | `sre-operator` / `rca-investigator` |
 
 ---
 
@@ -205,14 +209,14 @@
   2. 前端 `StockLog.biz_id` 类型对齐（`string | null`），`stock-logs.tsx` 渲染路径**不得**做任何数值转换；
   3. 有**原始字节**断言用例：直接对序列化后的 JSON 字节断言 `biz_id` 被引号包裹（不得用「反序列化到 `interface{}` 再比较」的写法——那会同时掩盖数字与字符串两种形态）；
   4. 有**负向用例**证明数字形态必然失真：同一 63 位 ID 经 JSON 数字路径往返后与原值不等，据此可证伪本判据不会静默放行。
-- **状态**：IN_PROGRESS —— 关联 [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14)。**代码与独立测试侧已收口**：`docs/changes/014-fix-gap-015-stock-log-biz-id-precision.md` 记录了修复（`json:"biz_id,string"`，nil 仍为 `null`）与原始字节断言；`qa-validator` 已把 `internal/model/qa_json_surface_test.go` 的钉住用例**翻转**为「set id 必为字符串 + nil 必为 `null`」，实测：
+- **状态**：**`CLOSED`** —— 关联 [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14)。**代码与独立测试侧已收口**：`docs/changes/014-fix-gap-015-stock-log-biz-id-precision.md` 记录了修复（`json:"biz_id,string"`，nil 仍为 `null`）与原始字节断言；`qa-validator` 已把 `internal/model/qa_json_surface_test.go` 的钉住用例**翻转**为「set id 必为字符串 + nil 必为 `null`」，实测：
   ```
   go test -count=1 ./internal/model/ -run TestQAStockLogBizIDShapePinsTheOpenContract -v
   --- PASS: TestQAStockLogBizIDShapePinsTheOpenContract (0.00s)
   ```
   **故此前记录的「门禁因该用例变红」已不成立**，`go test ./...` 不再因此有红点。门禁读数见 `014-*.md` §6 / §7（含 §7.2 对 `tsc --noEmit` 空转的订正）。
   **CI 实测**：PR [#17](https://github.com/Yotoha0303/go-order-management-system/pull/17) 的 `Test, Vet, Validate, Build` 已真跑（`internal/model` 包通过），**「未在 CI 验证」已不成立**。
-  **仍保持 `IN_PROGRESS`**：按状态枚举，`CLOSED` 需「DoD 全部满足 + 已过独立测试 / 证伪 / **门禁裁决**」，而本轮 `gate-auditor` 裁决为**阻断**——缺的是**门禁裁决这一环**，不是代码或测试。
+- **状态**：**`CLOSED`** —— 关联 [#14](https://github.com/Yotoha0303/go-order-management-system/issues/14)。**DoD ①②③④ 全部满足**（代码与测试侧收口见上）；**门禁裁决已放行**——**载体指针**：本文件 `GAP-020` 的「⚠️ 方法论」**第 6 条「门禁裁决载体（业务仓内）」**（**`:424`**）下的**三轮裁决表「第三轮」行**（**`:431`**），结论「**放行合并**」、所审 HEAD `aac6908`、并载明「`GAP-015` / `GAP-024` 转 `CLOSED` 的前置（裁决载体）已满足」。**此为总控依裁决作出的状态翻转（总控推荐，用户可否决）**，可反查载体即上引两行。
 
 ### GAP-016 · CI 测试库名与本机门禁开关的双向失真
 - **现状**（两处独立缺陷，**其一已修、其一仍在**）：
@@ -235,7 +239,7 @@
   1. `ci.yml` 的库名与 `safeDatabaseName` 相容（下划线形态），且**保留**该校验——它是库名拼进 `CREATE DATABASE` 之前的标识符防线，不是可以绕开的障碍；**（已由 `d024ef5` 满足，CI 实测见上）**
   2. `RUN_MYSQL_TEST=1` 时集成用例**真绿**，不得以 SKIP 代替；且须能证明**确实执行了**（例如给出非 SKIP 的执行数，而不是只看包级 `PASS`）；**（已满足，见下方「② 的满足证据」）**
   3. **负向用例**：非法库名必须 `Fatalf` 而非静默跳过——这是当前行为，须**钉住**，防止日后有人把校验改成 skip 来换绿；**（已建载体：`internal/service/qa_database_name_guard_test.go`，由 `4d37f29` 落盘，267 行；此前本 DoD 只有「一次性手工命令」作证据，那不是门禁——详见下方「③ 的满足证据」）**
-  4. 本机与 CI 使用**同一套**开关语义（`AGENTS.md` §5「本地跑的那一套 = CI 跑的那一套」）。
+  4. 本机与 CI 使用**同一套**开关语义（`AGENTS.md` §5「本地跑的那一套 = CI 跑的那一套」）。**（已处置：判为「语义一致、形式不同」——理由见下方「④ 的处置」，走裁决给的第 (a) 路）**
 - **⚠️ 一次绿不等于已验证（`2026-10-22T06:07:35Z` 的 run `39732018029`）**：该 run 属 PR [#17](https://github.com/Yotoha0303/go-order-management-system/pull/17)，`headSha 6fa11f8`，**两个作业全绿**（`Frontend` 1m9s / `Test, Vet, Validate, Build` 7m3s）。**但它不能作为 ② 的满足证据**：`6fa11f8` 的 `ci.yml:96` 是 `run: go test ./...`，**没有 `-v`**；不带 `-v` 时 `go test` **不打印** `--- PASS` / `--- SKIP`，故「日志里 `--- SKIP` 计数 = 0」是**因为没有打印，而不是因为没有跳过**。
   旁证（本机实测）：`internal/service` 在 `RUN_MYSQL_TEST` 未设时 `--- SKIP` = **69 条**、`--- PASS` = 24 条、包结果仍为 `ok`。**结构上「全部执行过」与「全被跳过」在包级 `ok` 下不可区分**——这正是 D3 的判据夹缝。
 - **② 的满足证据（载体已建成并产生真实读数）**：提交 `a6439d2` 把 `ci.yml` 的测试步骤改为
@@ -255,9 +259,19 @@
   - **① 表驱动分类用例** `TestQADatabaseNameClassification`——证明正则对库名的分类正确；但**它证不了「被拒绝的名字真的会中止」**（它只看一个 bool）；
   - **② AST 钉住** `TestQADatabaseNameGuardAbortsInsteadOfSkipping`——解析 `test_helper_test.go` 源码，断言 `ensureTestDatabase` 用 `t.Fatalf` 拒绝非法名；文件头注明「Mutation-verified: changing :102 to `t.Skipf` must turn it red」。
   - **为何需要 ②**（该文件头原文的理由，与本台账 D3 同源）：若有人为了「修红 CI」把 `test_helper_test.go:102` 的 `Fatalf` 改成 `t.Skipf`，**该包全部集成用例会静默转绿且没有任何东西失败**——这正是 D3 警告的「失败即静默」。
-  - ⚠️ **标注（c）**：上述「两次变异自检均变红」是**该文件自述**，本轮**未由我复跑变异**；我实测到的只有「文件已入库 + 两个顶层 Test 函数存在」。**「已入库」是实测，「变异有效」是转述。**
+  - ✅ **证据分级已升级为 (a) 实测（`2026-10-22` 由总控代跑坐实）**：注入 `t.Fatalf → t.Skipf` 后，`TestQADatabaseNameGuardAbortsInsteadOfSkipping` **变红**，失败信息含「must abort … skipping makes every integration test in this package silently green」。**此前的 (c) 推断已作废**——该判据**确实有牙**。
+    > ⚠️ **`2026-10-22` 复查（`ssot-scribe`）**：本条目的「变异有效」现为**(a)**；但同文件 `:259` 的钉住写法本身**另有一个误报面**（`rejectCalls` 收集的是该分支内**全部** `t.<method>()`，加一句 `t.Logf` 即误报）——**已另开 `GAP-028`**，两者不得互相结掉。
+- **④ 的处置（`2026-10-22`；裁决给的第 (a) 路：说明「为何允许不同」）**：
+  - **实测差异（a）**：
+    - **本地**：`Makefile:155-174` **分步**——`test-service` / `test-dao` / `test-migrations` / `test-order-timeout` 各自 `export RUN_MYSQL_TEST := 1`（`test-redis` 为 `RUN_REDIS_TEST := 1`，`test-order-timeout` 另加 `RUN_RABBITMQ_TEST := 1`），且各自带 `-v`；`make ci` 也是逐目标串行调用。
+    - **CI**：**单次** `go test -v ./...`（`ci.yml:101-102`）**加**独立断言步骤 `Assert no integration test was skipped`（`:109`）。
+  - **判为满足的理由（三点，均可核）**：
+    1. **开关语义逐字相同**：`ci.yml:18-20` 的 `RUN_MYSQL_TEST` / `RUN_REDIS_TEST` / `RUN_RABBITMQ_TEST` 与 `Makefile:155/167/171-172` **同名、同值 `1`**。DoD ④ 要求的是「同一套**开关语义**」，而**不是**「同一串命令」——**文字上确实不同，语义上一致**。
+    2. **两者的差异是各自目的所必需**：本地分步是为了**失败定位**（红在哪一组）与按需只跑一组；CI 单次是为了**总耗时**与**「一次跑完、无遗漏」**——若 CI 也分步，反而会**丢失**「全仓一次跑完」这一覆盖性质，并引入「某一步被漏加进矩阵」的新缺口（这正是 GAP-017 的形态）。**两种形式各自都在防一种失败，合并任一种都会引入另一种。**
+    3. **同一套判据已由 CI 侧钉住**：`skips=0` 断言（`:109-120`）是**形式无关**的——它只看 `go test -v` 的日志，**不论**命令是分步还是一次性。故「不许用 SKIP 代替」这条**在两种形式下都成立**。
+  - **残留（不是缺口，是约束）**：本地**没有**等价于 CI `Assert no integration test was skipped` 的步骤——本机 `make test-*` 仍可能因开关未设而 SKIP 并报 `ok`（见「现状」第 2 条）。**但**本地分步目标本身**已显式 export 开关**，故按 `Makefile` 走不会 SKIP；**只有绕过 `make` 直接跑 `go test` 才会**。该残留由 `GAP-011`（「消除 `t.Skip` 导致的本地虚假全绿」）承接，**不另开条目**。
 - **状态**：IN_PROGRESS —— 关联 [#15](https://github.com/Yotoha0303/go-order-management-system/issues/15)。
-  **① ② ③ 均已满足**（② 的证据见上：run `39733467897` / `39758849047`，`skips=0`；③ 的载体见上）。
+  **① ② ③ ④ 均已满足**（② 的证据见上：run `39733467897` / `39758849047`，`skips=0`；③ 的载体与**变异实测**见上；④ 的处置见上）。
   **仍不判 `CLOSED`**：`CLOSED` 还要求**门禁裁决**放行，而本轮 `gate-auditor` 裁决仍为**阻断**；
   且 GAP-020 未解除（`main` 尚无绿 run），本条目的证据基础仍待最终确认。
 
@@ -265,7 +279,7 @@
 - **现状**（**历史缺陷已修，当前状态如实如下**）：
   - **缺陷发生时（`4fa68f9`，`main` 当时的 HEAD）**：`.github/workflows/ci.yml` 共 **111 行**，**只有一个作业** `quality`（`:27`），步骤全部是 Go / goose / golangci-lint / `docker build`；`node` / `npm` / `npx` 关键字命中数 **0**（`Select-String` 实测）。
   - **现已修复**：提交 `d024ef5` 新增 `frontend` 作业；**`a6439d2` 起 `ci.yml` 共 195 行 / 2 个作业（`cb3c4ac` 实测同值）**，含 `frontend`（`:146`）、`actions/setup-node@v4`、`npm ci`、`npx tsc -b`（`:186`）、`npx eslint .`、`npx vitest run --browser.headless`。
-  - **CI 实测**：PR [#17](https://github.com/Yotoha0303/go-order-management-system/pull/17) 的 `Frontend (tsc, eslint, vitest browser, build)` → **pass 四轮**：run `39729484909`（`3584d1f`）**1m0s**、run `39732018029`（`6fa11f8`）**1m9s**、run `39733467897`（`a6439d2`）**56s**、run `39758849047`（`4d37f29`）**51s**。**故「前端用例在 PR 上不执行」已不成立。**
+  - **CI 实测**：PR [#17](https://github.com/Yotoha0303/go-order-management-system/pull/17) 的 `Frontend (tsc, eslint, vitest browser, build)` → **pass 五轮**：run `39729484909`（`3584d1f`）**1m0s**、run `39732018029`（`6fa11f8`）**1m9s**、run `39733467897`（`a6439d2`）**56s**、run `39758849047`（`4d37f29`）**51s**、run `39761963731`（`aac6908`）**64s**。**故「前端用例在 PR 上不执行」已不成立。**
   - 前端现有 **22 个测试文件**（`Get-ChildItem fronted/src -Recurse -Include *.test.ts,*.test.tsx`，已排除 `__screenshots__` 下的两个**同名 1 字节产物**——`Test-Path` 为真但 `ReadAllBytes` 被拒、非源码用例），其中含 GAP-013 的相关用例：`order-submission.test.ts`、`order-draft.test.ts`、`qa-order-submission-lifecycle.test.ts`、`qa-orders-form.test.tsx`。`fronted/package.json:14` 的 `test` 脚本为 `vitest run --browser.headless`。
 - **风险**：前端用例**存在**但**不在 PR 门禁内**——本地跑与不跑都不影响合并。这正是 `AGENTS.md` §2 03 环「新建用例 **100% 纳入 CI 矩阵**（拒绝门外用例）」所禁止的「门外用例」，且与 D3 同族：**失败不会响**。（该风险现已在 CI 配置层解除；剩余风险见 DoD ②：作业是否被设为 **required check** 尚**未验证**。）
 - **DoD**：
@@ -276,7 +290,7 @@
   - 文件计数（`2026-10-22T05:02Z`，`--listFiles` 过滤 `node_modules` / `typescript/lib`）：`npx tsc --noEmit` 检查 **0** 个源文件、`exit 0`；`npx tsc -p tsconfig.app.json --noEmit --listFiles` 检查 **150** 个；`npx tsc -b` 走 `references`，与后者同集。
   - **注入真实类型错误后的判别力**（`backend-dev` 注入 `src/__tsc_gate_probe.ts` 的 TS2322，探针已撤回、`Test-Path` 现为 `False`）：`npx tsc --noEmit` → `exit 0`（**漏检**）；`npx tsc -b` → `exit 2`（报出 `TS2322`）。
   - **结论**：只有 `tsc -b` 是**真正执行类型检查**的形式；`tsc --noEmit` 在本仓是**空转**，写成它就是一条无牙的判据（D3）。此条为 DoD ① 的判据依据，**不改动本项核心问题与 DoD 编号**。
-- **状态**：IN_PROGRESS —— 关联 [#16](https://github.com/Yotoha0303/go-order-management-system/issues/16)。**① ③ 已满足且 CI 已真跑 pass（四轮：`39729484909` / `39732018029` / `39733467897` / `39758849047`）；② 未验证**（required check 属仓外配置），故不判 `CLOSED`。
+- **状态**：IN_PROGRESS —— 关联 [#16](https://github.com/Yotoha0303/go-order-management-system/issues/16)。**① ③ 已满足且 CI 已真跑 pass（五轮：`39729484909` / `39732018029` / `39733467897` / `39758849047` / `39761963731`）；② 未验证**（required check 属仓外配置），故不判 `CLOSED`。
 
 ### GAP-018 · 商品主键序列化约定与订单侧不一致
 - **现状**：`internal/model/product.go:11` 为 `ID int64 \`gorm:"primaryKey;autoIncrement" json:"id"\``（**自增**，非 Snowflake）；`migrations/00001_create_product.sql:3` 亦为 `id BIGINT NOT NULL AUTO_INCREMENT`。该字段**直接进入响应体**：`internal/handler/product_handler.go:49`（创建）、`:83`（列表）、`:147`（详情）均为 `response.Success(c, product/…products…)`，无 DTO 转换层。
@@ -309,8 +323,8 @@
 ### GAP-020 · `main` 的 CI 长期全红，「`CLOSED`」结论从未经过 CI
 - **现状（实测 `gh run list --branch main --limit 20`，`2026-10-22T05:53Z` 采集）**：
   - **⚠️ 分支侧 vs `main` 侧（这条区分不写清，本项会被误读成「已关闭」）**：
-    - **分支侧 `fix/issue-14-order-module`：已连续四轮全绿** —— run `39732018029`（`6fa11f8`）、run `39733467897`（`a6439d2`）、run `39734691195`（`cb3c4ac`）与 run `39758849047`（`4d37f29`，`2026-10-22T09:53:04Z`，`gh run view` 实测：`Frontend` **51s**、`Test, Vet, Validate, Build` **3m31s**），四轮均为 `Frontend` + `Test, Vet, Validate, Build` **双作业 pass**。
-    - **`main`：仍然一次未绿**（`gh run list --branch main --limit 3` 于 `2026-10-22T06:45Z` 复采：最近一条仍是 `39651784273` @ `4fa68f9`，`failure`）。原因很直接：**PR #17 尚未合并**，`main` 上跑的仍是那 111 行 / 1 个作业的旧 `ci.yml`。
+    - **分支侧 `fix/issue-14-order-module`：已连续五轮全绿** —— run `39732018029`（`6fa11f8`）、run `39733467897`（`a6439d2`）、run `39734691195`（`cb3c4ac`）、run `39758849047`（`4d37f29`，`Frontend` **51s** / Go **3m31s**）与 run `39761963731`（`aac6908`，`2026-10-22T10:17:18Z`，`gh run view` 实测：`Frontend` **64s** / `Test, Vet, Validate, Build` **239s**），五轮均为 `Frontend` + `Test, Vet, Validate, Build` **双作业 pass**。
+    - **`main`：仍然一次未绿**（`gh run list --branch main --limit 2` 于 `2026-10-22T10:36Z` 复采：最近一条仍是 `39651784273` @ `4fa68f9`，`failure`）。原因很直接：**PR #17 尚未合并**，`main` 上跑的仍是那 111 行 / 1 个作业的旧 `ci.yml`。
     - **故「分支绿」不满足本项 DoD**。本项要的是 **`main` 上的一次成功 run**。
   - **`2026-07-07T05:56:15Z` 之后连续 15 次 `failure`，无一次 `success`**：`28848964896`（`07-07T07:22`）、`29594894144`、`29596015046`、`29598908734`、`29602411164`、`29646698974`、`39589875294`、`39602099199`、`39606899421`、`39616159527`、`39626627749`、`39630625435`、`39634710946`、`39650366486`、`39651784273`（`2026-10-21T18:20:12Z`，`headSha 4fa68f9`）。
   - ⚠️ **订正一处不准确的说法**：**并非「从未通过过」**——同一次采集里 `28844933317`（`2026-07-07T05:56:15Z`）、`28655645359`、`28648530857`、`28647042143` 四次为 `success`。**准确表述是「最近一次绿在 `2026-07-07T05:56:15Z`，此后 15 次连红」**。
@@ -359,6 +373,11 @@
 2. **能证明**：它们在**该次运行的环境中通过**（`success`）；
 3. **能证明**：此前「本地绿建立在 SKIP 上、CI 从未执行过它们」这一**证据缺陷**已消除——`SKIP` 与 `PASS` 现在是**可区分**的（这正是 `a6439d2` 加 `-v` + 断言步骤的目的）。
 
+> ⚠️ **关于「证据充分性存疑」那 6 项（`GAP-006` / `GAP-008` / `GAP-009` / `GAP-002` / `GAP-011` / `GAP-007`）：本次不回填，且这是决定，不是遗漏。**
+> **原因**：本表回填**只用一类证据**——**该用例在 CI 日志里的具名 `--- PASS` 行**。而那 6 项**没有对应的点名读数**：它们的变更记录里**既无 `--- SKIP`、也无 CI 记录**（这正是它们当初被标为「存疑」的理由），故**无从点名**。
+> **不得用「`passes=367 skips=0` 总数」去填它们**——那正是本条目方法论第 5 条明令禁止的推理跳跃（**计数不回答「哪条跑了」，更不回答「断言对不对」**）。
+> **故保持未回填，状态一律不放宽。** 它们的解除条件是：**各自补出可点名的 CI 读数**（即指出该 GAP 的关键用例名，并在某次 run 的日志里查到它的 `--- PASS` 行）。**为了表格整齐而填，比空着更坏**——空着是「未知」，填了是「假的已知」。
+
 ##### 该证据**不能**证明什么（本轮教训的核心）
 
 1. **不能证明这些用例的断言本身正确。** 用例通过只说明「它与当前实现一致」，**不说明它断言的是正确的行为**。**本轮实例（实测）**：`GAP-024` 的空壳用例 `TestCreateOrder_IdempotentReplayDoesNotPreDeductRedisAgain` 在 run `39734691195`（`cb3c4ac`）中是
@@ -378,7 +397,9 @@
   4. **机械守卫**：让「本机绿」与「CI 绿」在台账里**不可混淆**——条目状态旁须能看出依据来自哪一侧（本机 / CI）；并配负向用例：注入一条「只有本机 SKIP 绿、无 CI run」的记录，守卫必须报警（D3）。
 - **状态**：IN_PROGRESS —— 尚无 Issue 编号；本项为 **P0**，是全部 `CLOSED` 结论的**证据基础**问题，优先于其余条目。
   **DoD ③ 已部分回填**（上表 5 项，证据 run `39758849047`）；**DoD ①②④ 未满足**，故不判 `CLOSED`。
-  **不得因分支侧四轮全绿而降级**：DoD ① 明写「`main` 的 CI 连续通过」，**PR 合并前不可能满足**。
+  **裁决状态（第三轮，`aac6908`）：放行合并**——**该放行已执行**：`GAP-015` / `GAP-024` 转 `CLOSED` 的**前置（裁决载体）已满足**（见方法论第 6 条，`:424` / `:431`），两条**已据本裁决转 `CLOSED`**。**本条自身的 DoD 不受该放行影响**——见下。
+  ⚠️ **但本条自身不因「放行合并」而解除**：DoD ① 要的是 **`main` 上的一次成功 run**，而 `main` **仍一次未绿**（`39651784273` @ `4fa68f9`，`failure`）。**「放行合并」是就 PR #17 的合并而言，不是就本条的 DoD 而言**——两者不得互相结掉。
+  **不得因分支侧五轮全绿而降级**：DoD ① 明写「`main` 的 CI 连续通过」，**PR 合并前不可能满足**。
 - **⚠️ 方法论（本轮第三次踩到，故写死在台账里）**：**没有真跑证据时，结论必须标注为「推断」，不得与实测读数并列书写。**
   本轮已发生三次，形态完全相同——**静态读码 / 读配置得出一个听起来合理的因果，被真跑或原文推翻**：
   1. **`qa-validator`**：据 `product_handler.go:87-88` 的 `(0,0)` 推断 `TestListProducts_Pagination` 应为 P1 缺陷；实际该用例**不经 handler**，直接传 `PageSize: 2`，分页分支生效、断言正确（详见下方 `GAP-021` 撤销说明）。
@@ -400,6 +421,27 @@
        答不出 ⇒ 该「通过」**只能作为「执行证据」，不得作为「正确性证据」**。
      - **可操作推论**：`passes=N` 是**计数**，不是**证明**。计数回答「跑了多少」，不回答「断言对不对」。
        **引用计数时不得省略 run id 与 headSha**（`358` @ `a6439d2` → `367` @ `4d37f29` 已实测变化）。
+  6. **门禁裁决载体（业务仓内）—— 第 4 条的落地**（`2026-10-22` 落盘；**这是 `GAP-015` / `GAP-024` 转 `CLOSED` 的前置**）：
+     第 4 条要求「任一判 `CLOSED` 的条目须能反查到裁决原文」。此前三轮裁决**只落在框架仓的 `record.md`**，而该文件被框架仓 `.gitignore` 排除、**不入库**——**业务仓读者 clone 后够不到**，故第 4 条的判据在本仓**无法满足**。**本节即其载体**（按第 4 条的边界：**不新建文件**）。
+
+     | 轮次 | 结论 | 阻断项 / 收尾项 | 所审 HEAD | 出具时点 |
+     | --- | --- | --- | --- | --- |
+     | **第一轮** | **阻断** | 03 环：`E-1` 独立测试资产未入库（`qa_*` 全为未跟踪）、`E-2`/`E-3` CI 矩阵从未执行且 `go test` 无 `-v` 致「SKIP=0」为假读数；另 `E-4`~`E-8` 文档漂移；05 环缺实测 | ⚠️ **未记录**（见下方「本表的缺口」） | ⚠️ **未记录**（同上） |
+     | **第二轮** | **仍阻断** | `E-1`/`E-2`/`E-3` **已解除**；新增：`GAP-016` DoD③ 无钉住用例、`GAP-024` 空壳用例使 `passes` 虚高；04 环缺不可变 Digest 与 `REVISION` 断言、05 环仅有 `compose config -q` 语法验证；新发现 `E-9` / `E-12` / `E-13` / `E-14` | `cb3c4ac` | `2026-10-22T06:33Z`~`06:43Z` 之间（**区间值，非精确值**） |
+     | **第三轮** | **放行合并** | **无阻断项**；四项「不阻断合并、必须登记」的收尾：`E-11`（基线落后）、`G-5`（`GAP-016` DoD④ 从未处置）、`G-2`（**本条**：裁决原文在业务仓无载体）、`G-3`（`qa_database_name_guard_test.go` AST 钉住有误报面）；另要求把 04 / 05 / 06–10 环登记为独立 GAP | **`aac6908`** | ⚠️ **未单独记录**；本载体于 `2026-10-22T10:36Z` 后落盘 |
+
+     **第三轮的解除条件（逐项，均已在本轮处置）**：
+     1. `E-11` → `AGENTS.md` §4 重采，并**在 §4 内写明采集口径以打破「采集即过期」的循环**（见该节）；
+     2. `G-5` → `GAP-016` DoD ④ 给出「语义一致、形式不同」的裁定与理由（见该条目「④ 的处置」）；
+     3. `G-2` → **本节**（载体落进业务仓）；
+     4. `G-3` → 登记为 **`GAP-028`**（**只登记、不改代码**，按裁决要求）；
+     5. 04 / 05 / 06–10 环 → 登记为 **`GAP-029`** / **`GAP-030`** / **`GAP-031`**（DoD 均含「**阻断上生产，不阻断合并**」这一区分）。
+
+     ⚠️ **本表的缺口（如实，不粉饰）**：**第一轮的出具时点与所审 HEAD 未在任何地方留下记录**——这正是第 4 条要治的病，而它**在治它之前就已经发生过一次**。本表**不补造**这两个值（补造即为 (c) 推断冒充实测）。**第二轮的时点也只能给区间**（由框架仓运行态记录的落盘时点 `2026-10-22T06:43:15Z` 与其所审 `cb3c4ac` 的 run 时点反推）。**故本表自身的完备性，只能从第三轮起成立**——这不是瑕疵，是这条纪律**建立得太晚**的直接证据。
+     **「不补」是决定，且已确认（`2026-10-22`）**——理由两条，须与上一段合读：
+     1. **补造即违规**：第一轮裁决出具时总控**未落痕**，原始载体在**框架仓的运行态记录**里（该文件被框架仓 `.gitignore` 排除、**不入库**、**业务仓读者不可达**）。从那个载体反推出一个「时点 + HEAD」再写进本表，是**把仓外运行态的数字伪装成本仓实测**——正是第 1~3 条要治的形态。
+     2. **这个缺失本身就是证据**：它**恰恰是 `G-2` 的成因与实证**——「裁决原文只落在不入库的运行态里」导致的结果，就是**下一轮连上一轮审的是哪个提交都不知道**。**补一个数会让这条证据消失，而缺口留着会一直提醒后来者**。故**保持「未记录」**，并在此写明原因。
+     **后续轮次的义务**：每轮裁决**落盘时**必须同时写全**五项**（结论 / 阻断项 / 解除条件 / UTC 时点 / 所审 HEAD），**缺一即视为未落痕**，下轮不得据以放行。
 - **⚠️ 本轮追加的一条实测反例（关于「SKIP=0」这类读数的有效性）**：run `39732018029`（`6fa11f8`）**两作业全绿**，若据「日志里 `--- SKIP` 计数 = 0」判定「集成用例全部真跑」，**该判定无效**——`6fa11f8` 的 `ci.yml:96` 是 `run: go test ./...`，**无 `-v`**；不带 `-v` 时 `go test` **根本不打印** `--- PASS` / `--- SKIP` 行（本机已实测该行为）。**故「SKIP=0」只说明「没打印」，不说明「没跳过」**。这正是 D3 的「判据夹缝」：一个恒为零的读数看起来永远合格。解除方式见 DoD ④。
   **订正（实测 `2026-10-22T06:45Z`，HEAD `cb3c4ac`）**：本条此前曾写「且工作树已在补 `-v` + `set -o pipefail` + 断言 `skips -eq 0` 的步骤（**尚未提交**）」——**该表述已过期且会误导人**。实测：
   - `git show a6439d2 --stat` ⇒ `.github/workflows/ci.yml` **+28 / −1**，提交标题 `ci: fail the build when integration tests are skipped (GAP-016)`；
@@ -464,8 +506,8 @@
     - **增 2 个顶层用例 + 8 个子用例**：`TestQADatabaseNameClassification`（**表驱动，8 个子用例**：`lowercase` / `upper_and_digits_and_underscore` / `digits_only` / `hyphen_is_rejected` / `space_is_rejected` / `statement_injection_is_rejected` / `empty_is_rejected` / `backtick_escape_is_rejected`）与 `TestQADatabaseNameGuardAbortsInsteadOfSkipping`（run `39758849047` 日志逐行实取）；
     - **10 − 1 = +9** ⇒ `358 + 9 = 367`，**闭合**。
     **不得**把 367 读成「本项修复后仍为 358」；也**不得**把净增归因于本项（净增全部来自新增的 guard 用例）。
-- **状态**：IN_PROGRESS —— 尚无 Issue 编号。P2。**DoD ①②③ 均已满足**（处置见上）；
-  **仍不判 `CLOSED`**：按状态枚举，`CLOSED` 还要求**门禁裁决**放行，而本轮 `gate-auditor` 裁决仍为**阻断**——缺的是**裁决这一环**，不是代码或测试（同 `GAP-012` / `GAP-015` / `GAP-016` 的处置口径）。
+- **状态**：**`CLOSED`** —— 尚无 Issue 编号。P2。**DoD ①②③ 全部满足**（处置见上）；**门禁裁决已放行**——**载体指针**：本文件 `GAP-020` 的「⚠️ 方法论」**第 6 条「门禁裁决载体（业务仓内）」**（**`:424`**）下的**三轮裁决表「第三轮」行**（**`:431`**），结论「**放行合并**」、所审 HEAD `aac6908`。**此为总控依裁决作出的状态翻转（总控推荐，用户可否决）**，可反查载体即上引两行。
+  ⚠️ **与 `GAP-015` 的关系**：两条的裁决载体**同一处**（`:424` 的第 6 条 / `:431` 的第三轮行），故**同轮转 `CLOSED`**。
 
 ### GAP-025 · `internal/service` 的 CRLF 让 `gofmt -l` 变成恒噪声
 - **现状（本机实测，`2026-10-22`）**：
@@ -519,3 +561,82 @@
   5. 地板值的**后续调整**须走记录（`docs/changes/`），不得静默下调——下调地板等于放弃防回退。
 - **状态**：IN_PROGRESS —— 关联 [#19](https://github.com/Yotoha0303/go-order-management-system/issues/19)。P2。
   ⚠️ **两处同步义务（D4）**：本条正文与 Issue #19 正文**承载同一份实测证据**（`git grep -i thresholds` 零命中 / `vite.config.ts:75-85` 无 `thresholds` / **`vite.config.ts:76` 的 `include` 被注释 ⇒ 分母口径使前端覆盖率系统性高估**这一前置）——**任一方改动，另一方必须同步**。
+
+### GAP-028 · AST 钉住的 `rejectCalls` 断言过窄，会因无害调用误报失败
+- **现状（实测，`2026-10-22`，HEAD `aac6908`）**：`internal/service/qa_database_name_guard_test.go` 的 `TestQADatabaseNameGuardAbortsInsteadOfSkipping`：
+  - `:241-251` 以 `ast.Inspect` 遍历 `ensureTestDatabase` 的**非法名分支**，用 `qaIsTestingCall(call, tParam)` 收集**该分支内一切形如 `t.<method>(...)` 的调用**（`qaIsTestingCall` 见同文件：只校验接收者是 `*testing.T` 参数，**不区分方法名**）；
+  - `:252` `sort.Strings(rejectCalls)`；`:259` 断言 **`len(rejectCalls) != 1 || rejectCalls[0] != "Fatalf"`**。
+- **误报路径（可复现）**：在该分支内加**任何**一句无害的 `t.Logf(...)`（或 `t.Helper()`、`t.Errorf(...)`），`rejectCalls` 即变为 `["Fatalf","Logf"]` ⇒ **`len != 1` ⇒ 该用例失败**，而**被守护的性质（「非法名必须 `Fatalf` 中止，不得 `Skip`」）完好无损**。
+  > 注意：该断言**不是「恰好一个测试调用」**，而是「**该分支内恰好只有一个 `t.*` 调用，且它是 `Fatalf`**」——这个「恰好」是**偶然的**（当前分支里确实只有一句 `t.Fatalf`），**不是契约**。
+- **风险（P2，属 D3 的反面）**：本台账反复强调「**判据无牙**」（永远绿，不携带信息）；本条是**另一种坏形态**——**判据有牙，但会咬错人**。其后果比没有判据更糟：开发者遇到**假红**，最省事的处置是**删掉或放宽这条钉住**，于是**真正该守的「不得改成 Skip」也随之消失**。**误报会把守卫推向被移除**，而移除是静默的（此后没有任何东西会失败）。
+- **与 `GAP-016` 的边界（不得互相结掉）**：`GAP-016` 的 DoD③ 已被证明**有牙**（变异 `Fatalf → Skipf` 实测变红，见该条「③ 的满足证据」）；本条说的是**同一文件里另一处写法**的**误报面**。**「有牙」与「不误报」是两件事**——一个判据可以同时**有牙且误报**。
+- **DoD**：
+  1. **改断言口径**：从「**恰好一个且为 `Fatalf`**」改为「**必须包含 `Fatalf`**」（`slices.Contains(rejectCalls, "Fatalf")`），使无害调用不再导致失败；**`skipCalls` 那一半（`:254` 断言 `len(skipCalls) == 0`）保持不变**——「不得出现任何 `Skip*`」本来就是对**全量**的要求，不存在同类误报；
+  2. **保留判别力（关键，不得只放宽不加固）**：把「必须 `Fatalf`」与「不得 `Skip`」**分开断言**后，须**重新验证负向用例**：注入 `t.Fatalf → t.Skipf`，该用例**仍必须变红**（D3：放宽判据后**必须重跑负向用例**，否则「放宽」与「拆掉」在观测上同形）；
+  3. **另加一条防「空集通过」的判据**：断言 `rejectCalls` **非空**——否则若有人把整个分支删空/重构，`Contains` 也会失败（这条已由 `:236` 的 `guardBody == nil` 部分覆盖，但**分支存在 ≠ 分支里有调用**，故须显式）；
+  4. **补一条误报的回归用例**：在测试内以**合成 AST**（或临时改写副本）构造「分支里含 `Fatalf` + 一句 `t.Logf`」，断言**改后的口径不报错**——把「不误报」也变成可证伪的判据，而不是靠这次修完就算。
+- **状态**：IN_PROGRESS —— 关联 [#20](https://github.com/Yotoha0303/go-order-management-system/issues/20)。P2。**只登记，不改代码**（按第三轮裁决 `G-3` 的要求）。
+  ⚠️ **两处同步义务（D4）**：本条正文与 Issue #20 正文**承载同一份实测证据**（`rejectCalls` 的收集口径 / `:259` 的断言写法 / `t.Logf` 即误报的复现路径）——**任一方改动，另一方必须同步**。
+
+### GAP-029 · 04 环（构建）在本仓无任何对应物
+- **要求出处**：`AGENTS.md` §2 04 环准出条件 = 「镜像**不可变 Digest** + 运行时断言 `REVISION == Git HEAD`」。
+- **现状（实测，`2026-10-22`，HEAD `aac6908`）**：
+  - **零命中（a）**：`git grep -iE 'REVISION|@sha256|digest'` 全仓**仅一处命中**——`LICENSE:43` 的英文单词 `revisions`，**是散文，不是制品**。故「REVISION 断言」与「digest 固定」**均不存在**。
+  - **基础镜像全部是可变 tag（b）**：`Dockerfile:14` / `:36` / `:50` 三个 `FROM` 全部走变量——`${GO_IMAGE}`、`${RUNTIME_IMAGE}`（`Dockerfile:14/36` 为 `GO_IMAGE`，`:50` 为 `RUNTIME_IMAGE`），默认值由 `compose.yml:18-19` 提供：`golang:1.25.7-alpine` / `alpine:3.22`。
+  - **服务镜像同为可变 tag**：`compose.yml:60` `mysql:8.4`、`:75` `redis:7.2-alpine`、`:90` `rabbitmq:4.1-management-alpine`；应用镜像 `compose.yml:11` / `:109` 为 `go-order-management-system:local`（本地 tag）。
+  - **结论**：**同一份 `compose.yml` 在不同时间可能拉起不同的镜像内容**，且**无从校验**「跑的是哪个提交构建的」。
+- **风险**：与 `GAP-025` 同族的「**静默**」形态——不是构建失败，而是**构建成功但内容不可复现、不可追溯**。它使 `GAP-020` 要的「CI 通过 = 可发布」这一等式**缺一环**：CI 绿只说明**当时那台 runner 上**的构建通过了，**不说明**部署侧拉到的镜像与之同源。
+- **DoD**：
+  1. **基础镜像按 digest 固定**（`FROM alpine@sha256:…`），或在 `compose.yml` / `Dockerfile` 内以 digest 覆盖 tag；**不得**只固定 major.minor；
+  2. **构建时注入 `REVISION`**（= `git rev-parse HEAD`，经 `--build-arg` 或 `ldflags -X`），并在**运行时**暴露可查询面（如 `/version` 或启动日志）；
+  3. **加运行时断言**：`REVISION` 与**部署所声明的** Git HEAD **不一致即失败**（不得只打印不校验——「打印了」与「断言了」是两件事，同 `GAP-016` 的教训）；
+  4. **负向用例（D3）**：注入一个**伪造的 `REVISION`**，断言**必须失败**；并注入**一个不带 digest 的 tag**，断言镜像固定检查**必须报警**；
+  5. **本项的通过与否，不阻断 PR #17 的合并**——见下方「与合并前提的关系」。
+- **与合并前提的关系（用户已裁定）**：**04 环不作为 PR #17 的合并前提**。但**「不作为合并前提」不等于「不存在」**——本条目照常登记、照常计入活跃 GAP，只是**其解除不阻塞当前 PR**。
+  **DoD 的通过与否**：**阻断上生产，不阻断合并**。判据一句话：**合并**是把已通过 CI 的改动并入 `main`（可回退）；**上生产**是把镜像交付给真实流量（`GAP-029` 的缺陷在那一刻才变成**不可追溯的线上事实**）。
+- **状态**：IN_PROGRESS —— 关联 [#21](https://github.com/Yotoha0303/go-order-management-system/issues/21)。P1（**阻断上生产，不阻断合并**）。
+  ⚠️ **同步义务（D4）**：本条正文与 Issue #21 正文**承载同一份实测证据**（`REVISION|@sha256|digest` 的唯一命中是 `LICENSE:43` 散文、三个 `FROM` 全为可变 tag、服务镜像同为可变 tag）——**任一方改动，另一方必须同步**。
+
+### GAP-030 · 05 环（部署）的两条准出条件在本仓均无判据
+- **要求出处**：`AGENTS.md` §2 05 环准出条件 = 「部署脚本**全链路幂等**（连续执行无状态突变）+ 配置与环境变量**双向对齐无残留**」。
+- **现状（实测，`2026-10-22`，HEAD `aac6908`）**：
+  - **幂等那一半**：`deploy.sh` 共 **451 行**，含 `set -euo pipefail`（`:6`）与 `compose up -d --build --wait`（`:216`），并有若干**防御性**分支（`:84` "Docker is already available."、`:108` "`/etc/docker/daemon.json` already exists; leave it unchanged."）。**但这些是逐点防御，不是幂等判据**——**没有任何**「连续执行两次、状态无突变」的断言或演练记录。**故「全链路幂等」未被持有。**
+  - **配置对齐那一半**：唯一载体是 `AGENTS.md` §2 的 `docker compose config -q`（`Makefile:189-190` 的 `compose-config`）。**它只做语法校验、不执行任何容器**——**语法合法 ≠ 配置与环境变量真对齐**（这正是 D3 的「判据夹缝」）。
+- **与 `GAP-026` 的边界（不得互相结掉）**：`GAP-026`（`compose.yml` 三处 `DB_NAME` 默认值含连字符）**是「配置对齐」这半边的一个具体面**——它指出一处**形态不一致**。本条说的是**该环整体缺少判据**。**修好库名不等于 05 环准出**；反之亦然。
+- **风险**：部署是**不可逆动作**里最贵的一类。幂等未验证的后果是**「第二次执行会怎样」无人知道**——而重跑部署恰是**故障时最先做的事**（`AGENTS.md` 08 环的恢复路径）。与 `GAP-029` 同族：**失败发生在最不方便的时刻**。
+- **DoD**：
+  1. **幂等演练（a）**：在干净环境**连续执行两次** `deploy.sh`，第二次**不得**产生状态突变（容器无重建、迁移无重复应用、`/etc/docker/daemon.json` 等被「already exists」分支跳过）；**须留真实 stdout / 退出码**，不得只声明；
+  2. **配置双向对齐**：枚举**代码读取的每一个环境变量**与**`compose.yml` / `.env.example` / `config.yml` 提供的每一个**，两侧求差集；**两个方向都必须为空**（代码要但没人给 ⇒ 运行时缺；给了但没人读 ⇒ 残留）。`docker compose config -q` **不足以**替代这一步（它看不到「代码读不读」）；
+  3. **负向用例（D3）**：注入一个**代码读取但配置缺失**的变量，断言**必须显式失败**（不得静默用零值启动——同 `GAP-014` 的「失败必须显式可见」）；
+  4. **`GAP-026` 并入本项的验证**：库名形态一致性作为 ② 的一个检查点，**但不替代** ② 的其余部分。
+- **与合并前提的关系（用户已裁定）**：**05 环不作为 PR #17 的合并前提**；但**「不作为合并前提」不等于「不存在」**。
+  **DoD 的通过与否**：**阻断上生产，不阻断合并**（理由同 `GAP-029`：合并可回退，上生产不可逆）。
+- **状态**：IN_PROGRESS —— 关联 [#21](https://github.com/Yotoha0303/go-order-management-system/issues/21)。P1（**阻断上生产，不阻断合并**）。
+  ⚠️ **同步义务（D4）**：本条正文与 Issue #21 正文**承载同一份实测证据**（`deploy.sh` 无幂等断言、配置对齐只靠 `compose config -q` 语法校验、`GAP-026` 是其中一面）——**任一方改动，另一方必须同步**。
+
+### GAP-031 · 06–10 环（观测/排障/恢复/复盘/自动化）在本仓无任何对应物
+- **要求出处**：`AGENTS.md` §2 的 **06 观测 / 07 排障 / 08 恢复 / 09 复盘 / 10 自动化** 五环准出条件（Alertmanager active 区分 + 严重度参与 + 真实停机演练 · 秒级时间线 + 对照实验 + 根因回写 · 实测 RTO/RPO · 行动项带 DoD · 定时器前置条件断言 + 独立归档报告）。
+- **现状（实测，`2026-10-22`，HEAD `aac6908`）**——**合并为一条**（五环在本仓的状态同形：**均无对应物**）：
+  - **`alertmanager` 零命中**（全仓，跟踪文件）；
+  - **`severity` / `rto` / `rpo` 仅在散文里出现**：唯一相关命中是 `docs/adr/003-inventory-locked-quantity-and-reconcile-autofix.md:35`——原文说的是「对账差异数与自愈结果**未**暴露 Prometheus 指标，SRE 监控平台与 Alertmanager **无法感知**静默的数据漂移」。**这是问题陈述，不是制品**——它恰恰在说「06 环缺什么」。
+  - **制品过滤零命中**：`git ls-files` 过滤 `prometheus|alertmanager|grafana|dashboard|runbook|slo|sli` ⇒ **零 SRE 制品**。
+    > ⚠️ **两处命中必须排除，否则会得出相反结论**：`fronted/src/features/order-inventory/dashboard.tsx` 是**业务页面**（库存看板），**不是** SRE 仪表盘；`fronted/eslint.config.js` 的命中是 `@eslint/js` / `eslint-plugin-*` 里的子串，**纯误报**。
+  - **恢复/演练制品过滤零命中**：`git ls-files` 过滤 `drill|failover|backup|restore|chaos` ⇒ **零命中** ⇒ **无停机演练、无 RTO/RPO 实测、无备份/恢复脚本**。
+  - **故**：06（无告警规则、无 SLI/SLO）、07（无 Runbook、无时间线还原）、08（无恢复演练、无 RTO/RPO 实测）、09（无复盘模板、无行动项载体）、10（无定时任务前置断言、无归档报告）**五环全部为「该环尚未建设」**。
+- **风险**：这五环的**共同性质是「只在出事后才被用到」**——平时缺席**没有任何症状**（不像 03 环缺用例会立刻红）。故它们最容易**长期停在「未满足」而无人注意**：`AGENTS.md` §2 明写「**对应物不存在时该环判「未满足」，不是「不适用」**」。
+  **本仓现状的准确表述**：这些环**不是被豁免**，而是**尚未建设**——两者在台账里必须区分（豁免是决定，未建设是缺口）。
+- **DoD（按环，各自独立，不得互相结掉）**：
+  - **06 观测**：① 有可被 Alertmanager 消费的**告警规则文件**（入库）；② 告警**区分 active / 已恢复**；③ 每条告警带**严重度**并参与路由；④ 至少一次**真实停机演练**（不是 mock）；
+  - **07 排障**：① 有一次真实排障的**秒级时间线**；② 有**对照实验**（同条件开/关对照）；③ **根因回写**到本台账或设计文档；④ 改进项**转为 `GAP-` 编号**；
+  - **08 恢复**：① **实测** RTO/RPO（不是估算）；② **业务级**可用性核验（不是「进程起来了」）；③ 备份可恢复性演练——**损坏的备份必须被拒绝**（不得「恢复成功但数据是空的」）；
+  - **09 复盘**：① 行动项具备**承载形式**（编号 + 责任角色 + 截止）；② 每条有**可度量 DoD**；③ 依赖关系写明；
+  - **10 自动化**：① 定时任务**前置条件断言**（条件不满足即失败，不得静默跳过）；② **独立归档报告**（不得只写日志）。
+  - **五环共同**：**每一项都须配负向用例**（D3）——注入故障后**必定**触发，否则「有告警文件」与「告警真的会响」是两件事。
+- **与合并前提的关系**：用户已裁定 **04/05 不作为 PR #17 的合并前提**；**06–10 环同属「非合并前提」**（它们连构建与部署都不是，更不影响代码合并）。
+  **DoD 的通过与否**：**阻断上生产，不阻断合并**。**判据**：合并的后果限于 `main` 的代码内容（可 `git revert`）；上生产的后果是**真实用户与真实数据**——06–10 环缺位意味着**出事时既看不见、也查不出、也恢复不了**，这三件事**都无法靠回退代码解决**。
+- **状态**：IN_PROGRESS —— 关联 [#21](https://github.com/Yotoha0303/go-order-management-system/issues/21)。P1（**阻断上生产，不阻断合并**）。
+  ⚠️ **同步义务（D4）**：本条正文与 Issue #21 正文**承载同一份实测证据**（`alertmanager` 零命中、`severity`/`rto`/`rpo` 仅散文、制品过滤零命中、**以及下方两处误报的排除**）——**任一方改动，另一方必须同步**。
+  > ⚠️ **两处误报的排除必须保留（否则下一轮会被当命中重新翻案）**：
+  > - `fronted/src/features/order-inventory/dashboard.tsx` —— **业务页面**（库存看板），**与 SRE 仪表盘无关**；
+  > - `fronted/eslint.config.js` —— 命中是 `@eslint/js` / `eslint-plugin-*` 里的**子串**，**纯误报**。
+  > **排除理由已同步写入 Issue #21 正文**；两处**均不得**计入「06–10 环有对应物」。
