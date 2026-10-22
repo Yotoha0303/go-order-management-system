@@ -41,7 +41,7 @@ export const queryKeys = {
   ordersRoot: ['orders'] as const,
   orders: (page: number, pageSize: number) =>
     ['orders', { page, pageSize }] as const,
-  order: (id: number) => ['orders', id] as const,
+  order: (id: string) => ['orders', id] as const,
 }
 
 export const healthApi = {
@@ -127,12 +127,12 @@ export const orderApi = {
         params: { page, page_size: pageSize },
       })
     ),
-  detail: (id: number) =>
+  detail: (id: string) =>
     unwrap<OrderDetail>(api.get<ApiResponse<OrderDetail>>(`/orders/${id}`)),
-  pay: (id: number) =>
+  pay: (id: string) =>
     unwrap<void>(api.patch<ApiResponse<void>>(`/orders/${id}/pay`)),
-  finish: (id: number) =>
+  finish: (id: string) =>
     unwrap<void>(api.patch<ApiResponse<void>>(`/orders/${id}/finish`)),
-  cancel: (id: number) =>
+  cancel: (id: string) =>
     unwrap<void>(api.patch<ApiResponse<void>>(`/orders/${id}/cancel`)),
 }

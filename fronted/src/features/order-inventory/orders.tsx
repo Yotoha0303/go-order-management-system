@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Plus, Trash2 } from 'lucide-react'
+import { Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -38,6 +38,14 @@ import {
 } from './components'
 import { formatDateTime, formatFen, PRODUCT_STATUS } from './format'
 import {
+  appendDraftItem,
+  createInitialDraftItems,
+  removeDraftItem,
+  replaceDraftItem,
+  resetDraftItems,
+  type DraftOrderItem,
+} from './order-draft'
+import {
   isOrderActionAllowed,
   requiresOrderActionConfirmation,
   type OrderAction,
@@ -47,11 +55,6 @@ import {
   type PendingOrderSubmission,
 } from './order-submission'
 import type { CreateOrderPayload, Order } from './types'
-
-type DraftOrderItem = {
-  product_id: string
-  quantity: string
-}
 
 const actionText: Record<OrderAction, string> = {
   pay: '支付',
@@ -63,10 +66,8 @@ const orderPageSize = 10
 
 export function OrdersPage() {
   const queryClient = useQueryClient()
-  const [items, setItems] = useState<DraftOrderItem[]>([
-    { product_id: '', quantity: '1' },
-  ])
-  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null)
+  const [items, setItems] = useState<DraftOrderItem[]>(createInitialDraftItems)
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const [pendingSubmission, setPendingSubmission] =
     useState<PendingOrderSubmission | null>(null)
@@ -86,9 +87,12 @@ export function OrdersPage() {
     queryFn: () => productApi.list(PRODUCT_STATUS.ON_SALE),
   })
 
+  // Order ids are 63-bit Snowflake integers serialized as JSON strings
+  // (GAP-012); they must never pass through Number(), which truncates above
+  // 2^53 and would request a non-existent id.
   const orderDetailQuery = useQuery({
-    queryKey: queryKeys.order(selectedOrderId ?? 0),
-    queryFn: () => orderApi.detail(selectedOrderId ?? 0),
+    queryKey: queryKeys.order(selectedOrderId ?? ''),
+    queryFn: () => orderApi.detail(selectedOrderId ?? ''),
     enabled: selectedOrderId !== null,
   })
 
@@ -102,7 +106,7 @@ export function OrdersPage() {
     }) => orderApi.create(payload, idempotencyKey),
     onSuccess: async (order) => {
       toast.success(`订单创建成功：${order.order_no}`)
-      setItems([{ product_id: '', quantity: '1' }])
+      setItems(resetDraftItems())
       setPendingSubmission(null)
       setSelectedOrderId(order.id)
       setPage(1)
@@ -111,11 +115,17 @@ export function OrdersPage() {
         queryClient.invalidateQueries({ queryKey: queryKeys.stockLogsRoot }),
       ])
     },
-    onError: (error) => toast.error(getErrorMessage(error)),
+    onError: (error) => {
+      // GAP-013: the failed submission is no longer in flight. Keeping it
+      // would make the next click reuse the same idempotency key and hit the
+      // backend replay path instead of creating the order the user retried.
+      setPendingSubmission(null)
+      toast.error(getErrorMessage(error))
+    },
   })
 
   const orderActionMutation = useMutation({
-    mutationFn: async ({ id, action }: { id: number; action: OrderAction }) => {
+    mutationFn: async ({ id, action }: { id: string; action: OrderAction }) => {
       if (action === 'pay') return orderApi.pay(id)
       if (action === 'finish') return orderApi.finish(id)
       return orderApi.cancel(id)
@@ -136,12 +146,11 @@ export function OrdersPage() {
     onError: (error) => toast.error(getErrorMessage(error)),
   })
 
-  function updateItem(index: number, patch: Partial<DraftOrderItem>) {
-    setItems((current) =>
-      current.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, ...patch } : item
-      )
-    )
+  function updateItem(
+    index: number,
+    patch: Partial<Omit<DraftOrderItem, 'rowId'>>
+  ) {
+    setItems((current) => replaceDraftItem(current, index, patch))
   }
 
   function requestOrderAction(order: Order, action: OrderAction) {
@@ -153,7 +162,23 @@ export function OrdersPage() {
   }
 
   function removeItem(index: number) {
-    setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))
+    setItems((current) => removeDraftItem(current, index))
+  }
+
+  function addItem() {
+    setItems((current) => appendDraftItem(current))
+  }
+
+  /**
+   * GAP-013: the form had no way back to a clean state. Resetting must mint a
+   * fresh rowId (otherwise the Select keeps showing the previous product) and
+   * must drop the pending submission (otherwise the next order would reuse the
+   * previous idempotency key).
+   */
+  function handleResetForm() {
+    setItems(resetDraftItems())
+    setPendingSubmission(null)
+    setSelectedOrderId(null)
   }
 
   function parseCreateOrderPayload(): CreateOrderPayload | null {
@@ -232,12 +257,17 @@ export function OrdersPage() {
                 <div className='space-y-3'>
                   {items.map((item, index) => (
                     <div
-                      key={index}
+                      key={item.rowId}
                       className='grid grid-cols-[1fr_110px_auto] items-end gap-2'
                     >
                       <Field label={index === 0 ? '商品' : ' '}>
+                        {/* GAP-013: always controlled. An empty string is a
+                            valid controlled value that Radix renders as the
+                            placeholder; `undefined` would hand the selection
+                            to Radix's internal state and flip the component
+                            between controlled and uncontrolled. */}
                         <Select
-                          value={item.product_id || undefined}
+                          value={item.product_id}
                           onValueChange={(value) =>
                             updateItem(index, {
                               product_id: value,
@@ -304,31 +334,35 @@ export function OrdersPage() {
                     type='button'
                     variant='outline'
                     className='flex-1'
-                    onClick={() =>
-                      setItems((current) => [
-                        ...current,
-                        { product_id: '', quantity: '1' },
-                      ])
-                    }
+                    onClick={addItem}
                   >
                     <Plus />
                     添加商品
                   </Button>
                   <Button
-                    type='submit'
+                    type='button'
+                    variant='outline'
                     className='flex-1'
-                    disabled={
-                      createOrderMutation.isPending ||
-                      productsQuery.isLoading ||
-                      onSaleProducts.length === 0
-                    }
+                    onClick={handleResetForm}
                   >
-                    {createOrderMutation.isPending && (
-                      <Loader2 className='animate-spin' />
-                    )}
-                    提交订单
+                    <RotateCcw />
+                    清空
                   </Button>
                 </div>
+                <Button
+                  type='submit'
+                  className='w-full'
+                  disabled={
+                    createOrderMutation.isPending ||
+                    productsQuery.isLoading ||
+                    onSaleProducts.length === 0
+                  }
+                >
+                  {createOrderMutation.isPending && (
+                    <Loader2 className='animate-spin' />
+                  )}
+                  提交订单
+                </Button>
               </form>
             </CardContent>
           </Card>

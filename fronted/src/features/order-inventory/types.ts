@@ -49,7 +49,12 @@ export type StockLog = {
   before_quantity: number
   after_quantity: number
   biz_type: number
-  biz_id?: number | null
+  // Carries the 63-bit Snowflake order id for biz_type 3/4 (order deduct /
+  // rollback) and is serialized as a JSON string by the backend so that
+  // JSON.parse does not truncate it past 2^53. Null for biz_type 1/2
+  // (init / manual add), which have no business aggregate id.
+  // Never convert back to number: that truncation is the defect itself.
+  biz_id?: string | null
   remark: string
   created_at: string
 }
@@ -77,7 +82,10 @@ export type OperationLogList = {
 }
 
 export type Order = {
-  id: number
+  // 63-bit Snowflake ids are serialized as JSON strings by the backend so that
+  // JSON.parse does not truncate them past 2^53 (GAP-012). Never convert back
+  // to number: that truncation is the defect itself.
+  id: string
   order_no: string
   total_amount_fen: number
   status: number
@@ -89,8 +97,11 @@ export type Order = {
 }
 
 type OrderItem = {
+  // `id` and `product_id` are auto-increment bigints and stay JSON numbers.
+  // `order_id` carries the Snowflake order key and is serialized as a string
+  // alongside Order.id (internal/model/order_items.go), so it is typed string.
   id: number
-  order_id: number
+  order_id: string
   product_id: number
   product_name: string
   product_price_fen: number
