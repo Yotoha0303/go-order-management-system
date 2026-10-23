@@ -11,6 +11,23 @@ bin/
 coverage.*
 docs/evidence/*
 !docs/evidence/*.md
+# Raw pprof captures are the evidence behind docs/evidence/pprof_report_*.md.
+# Without them the report's CPU/heap claims cannot be re-derived by a reader,
+# and a report citing a path that is not in the checkout is a phantom reference.
+#
+# The directory must be re-included before its contents: git will not descend
+# into an excluded directory, so a file rule alone does nothing while
+# `docs/evidence/*` still excludes the directory itself. Measured - with only
+# the file rule, cpu.prof stayed ignored.
+#
+# Contents are then excluded again and only the capture formats re-included, so
+# an unrelated artifact dropped into this directory is not swept in by accident.
+# Measured: with a bare `pprof-*/*`, random.bin and sub/evil.bin were both
+# trackable - wider than this rule claims to be.
+!docs/evidence/pprof-*/
+docs/evidence/pprof-*/*
+!docs/evidence/pprof-*/*.prof
+!docs/evidence/pprof-*/*.txt
 
 # Tool-generated atomic-write backups (for example, config.go.123456789).
 *.go.[0-9]*
