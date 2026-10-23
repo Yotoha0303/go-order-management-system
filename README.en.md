@@ -15,9 +15,9 @@
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](compose.yml)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-> A Go order-and-inventory service built as a backend portfolio piece. It focuses on transaction consistency, concurrent stock deduction, per-user idempotency, the order state machine, RabbitMQ-driven delayed cancellation, per-user data isolation, Redis caching, and baseline production engineering.
+> A Go service for order and inventory consistency, covering transactional consistency, concurrent stock deduction, per-user idempotency, the order state machine, RabbitMQ-driven delayed cancellation, per-user data isolation, Redis caching, and CI gates.
 
-This is deliberately not a full e-commerce platform - no cart, payment gateway, logistics, or coupon subsystems. The point is to make the order-and-inventory critical path solid: the parts of backend work that get asked about most and that show engineering judgement best.
+This is deliberately not a full e-commerce platform - no cart, payment gateway, logistics, or coupon subsystems. The point is to make the order-and-inventory critical path solid: idempotent order creation, no oversell under concurrency, cross-table write consistency, the order state machine, timeout cancellation with stock restore, per-user data isolation, Redis caching with degradation, observability, and CI gates.
 
 > 📖 **Entry points**
 > - 📘 [Core business design](#core-business-design): order creation, idempotency, caching, business rules
@@ -32,10 +32,10 @@ This is deliberately not a full e-commerce platform - no cart, payment gateway, 
 | Dimension | Description |
 | --- | --- |
 | What it is | A Go service for order and inventory consistency |
-| Good for | Go backend portfolio, practice on transactions/locks/idempotency/state machines |
+| Where it fits | A backend base for small-to-mid order and inventory systems; a reference for concurrent deduction, idempotency, and eventual consistency |
 | Critical path | Login → create order → idempotency check → transactional stock deduction → order + items + stock log → state transitions |
 | Backend stack | Gin, GORM, MySQL transactions, row locks, conditional updates, RabbitMQ, Outbox, JWT, Redis cache-aside, Docker, CI |
-| What it demonstrates | Business consistency, concurrency safety, data isolation, and engineering completeness - not CRUD volume |
+| Engineering scope | Idempotent order creation, oversell prevention, cross-table consistency, state machine, timeout cancellation with stock restore, data isolation, and CI gates - no peripheral e-commerce features |
 
 ### Live demo
 

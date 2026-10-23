@@ -57,3 +57,19 @@ http:
     readHeaderTimeout: 2s
     maxHeaderBytesKib: 128
     timeout: 18s
+
+# Go runtime profiling. OFF by default - /debug/pprof exposes goroutine stacks,
+# heap contents and a CPU sampler, so enabling it is opening it.
+#
+# Addr must be loopback; startup fails otherwise. That is why enabling this on a
+# cloud host does not open a remote port - reach a remote instance through a
+# tunnel instead:
+#   ssh -L 6060:127.0.0.1:6060 <host>
+# then point the profiler at http://127.0.0.1:6060.
+#
+# Override with PPROF_ENABLED / PPROF_ADDR. PPROF_ENABLED must be a real boolean
+# (true/false/1/0) - anything else fails startup rather than silently reading as
+# off, the same fail-closed rule REDIS_TLS follows.
+pprof:
+  enabled: false
+  addr: 127.0.0.1:6060
