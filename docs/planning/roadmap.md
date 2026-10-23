@@ -49,3 +49,4 @@
 2. **静态代码质量**：`golangci-lint run`
 3. **数据库迁移**：`make migrate-validate`
 4. **留痕机制**：每次迭代前在 `docs/changes/` 先写变更记录单，通过自验后方可合并提交。
+# D3 negative-test scratch
