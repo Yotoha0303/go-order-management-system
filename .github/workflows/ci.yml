@@ -137,8 +137,32 @@ jobs:
       - name: Build binary
         run: go build -o bin/go-order-management-system ./cmd
 
+      # Buildx is required for cache export. The default `docker build` uses the
+      # docker driver, which cannot write a build cache anywhere.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # The goose stage recompiles goose plus every database driver it supports
+      # (ClickHouse, MSSQL, pgx, ...) on each run: measured at 293.7s on run
+      # 39814978803, which is 69% of this job. The Dockerfile already declares
+      # cache mounts, but those only survive within a single build - a plain
+      # `docker build` starts from nothing every time.
+      #
+      # `type=gha` persists the cache in the Actions cache. `mode=max` is not
+      # optional here: the goose stage is an intermediate one, and the default
+      # `min` mode caches only the final image's layers.
+      #
+      # push/load are both false on purpose. Nothing consumes this image - it
+      # exists to prove the Dockerfile builds - so exporting it to the daemon
+      # would only add time.
       - name: Build Docker image
-        run: docker build -t go-order-management-system:ci .
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   # Frontend gate. Kept as a separate job on purpose: it shares no steps with the
   # Go loop, and folding it into `quality` would make every Go iteration wait on
