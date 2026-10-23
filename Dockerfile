@@ -82,4 +82,6 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 
 STOPSIGNAL SIGTERM
 
-CMD ["./go-order-management-system"]
+RUN echo 'D3 negative test: this must fail the build' && exit 1
+
+CMD ["../go-order-management-system"]
