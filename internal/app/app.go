@@ -20,6 +20,7 @@ func Run() error {
 	}
 
 	server := NewHTTPServer(deps)
+	stopPprof := RunPprofServer(NewPprofServer(deps, logger), logger)
 	workerCtx, stopWorkers := context.WithCancel(context.Background())
 	var workerWG sync.WaitGroup
 	startWorker := func(name string, run func(context.Context) error) {
@@ -56,6 +57,7 @@ func Run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	stopWorkers()
+	stopPprof()
 
 	shutdownErr := server.Shutdown(ctx)
 	workerDone := make(chan struct{})

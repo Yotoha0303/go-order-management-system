@@ -18,10 +18,30 @@ type Config struct {
 	InventoryReconcile InventoryReconcileConfig `yaml:"inventoryReconcile"`
 	JWT                JWTConfig                `yaml:"jwt"`
 	HttpServer         HttpServer               `yaml:"http"`
+	Pprof              PprofConfig              `yaml:"pprof"`
 }
 
 type ServerConfig struct {
 	Port int `yaml:"port"`
+}
+
+// PprofConfig controls the optional Go runtime profiling endpoint.
+//
+// Off by default. /debug/pprof exposes goroutine stacks, heap contents and a
+// CPU sampler that runs for the duration of the request, so leaving it enabled
+// is leaving it open. It is deliberately a separate listener from the business
+// port rather than a route on the main router.
+//
+// Addr must be a loopback address; Validate rejects anything else. Enabling
+// profiling on a cloud host therefore does NOT open a remote port - profile a
+// remote instance through an SSH tunnel:
+//
+//	ssh -L 6060:127.0.0.1:6060 <host>
+//
+// and then point the profiler at http://127.0.0.1:6060.
+type PprofConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Addr    string `yaml:"addr"`
 }
 
 type MySQLConfig struct {
@@ -165,6 +185,27 @@ func applyEnvOverrides(cfg *Config) error {
 		cfg.JWT.ExpireHours = hours
 	}
 
+	if err := applyPprofEnvOverrides(&cfg.Pprof); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func applyPprofEnvOverrides(cfg *PprofConfig) error {
+	if v := os.Getenv("PPROF_ENABLED"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			// Fail closed, same as REDIS_TLS: a typo like `PPROF_ENABLED=maybe`
+			// must not silently read as "off" while the operator believes it is
+			// on. The whole point of this switch is that its state is knowable.
+			return fmt.Errorf("invalid PPROF_ENABLED: %w", err)
+		}
+		cfg.Enabled = enabled
+	}
+	if v := os.Getenv("PPROF_ADDR"); v != "" {
+		cfg.Addr = v
+	}
 	return nil
 }
 
