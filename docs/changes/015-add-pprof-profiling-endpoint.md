@@ -106,16 +106,16 @@ invalid PPROF_ENABLED: ...    # 启动中止
 
 ## 7. 下游同步清单与未竟 GAP
 
-**已同步**：`config.yml`（默认值 + 注释）· `.env.example`（`PPROF_ENABLED` / `PPROF_ADDR`）· `docs/evidence/pprof_report_2026-10-23.md`（剖析制品）· `docs/evidence/pprof-2026-10-23/*.prof` · `docs/resume_material.md`（量化素材，引用本条的制品）。
+**已同步**：`config.yml`（默认值 + 注释）· `.env.example`（`PPROF_ENABLED` / `PPROF_ADDR`）· **`docs/observability.md`（新增 §7 性能剖析，原 §7/§8 顺延为 §8/§9）** · `docs/evidence/pprof_report_2026-10-23.md`（剖析制品）· `docs/evidence/pprof-2026-10-23/*.prof` · `docs/resume_material.md`（量化素材，引用本条的制品）。
 
 **未做（如实，不声称已完成）**：
 
 | 项 | 状态 |
 | --- | --- |
-| **`docs/observability.md` 未提 pprof** | ❌ 未做 |
 | **写链路（下单事务 / Redis Lua / Outbox）未剖析** | ❌ 本次只压了读链路 |
 | **多时点 heap 采样未做** | ❌ 故「无泄漏」结论强度仅为「未观察到累积」 |
 | **端到端剖析流程未进 CI** | ❌ 本条的**单测**在 CI 里会跑（`go test ./...`），但**压测 + 抓 profile** 那套流程没有 CI 步骤 |
+| **`block` / `mutex` profile 未启用** | ❌ 需 `runtime.SetBlockProfileRate` / `SetMutexProfileFraction`，本仓未设 |
 
 **与 `GAP-031`（06–10 环无对应物）的关系**：**本条不解除它**。06 环准出要的是「Alertmanager 告警规则 + 严重度参与 + 真实停机演练」，pprof 是**人工排查**工具，**不产生任何告警**。**不得据本条关闭 `GAP-031`。**
 

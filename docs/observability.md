@@ -2,16 +2,20 @@
 
 ## 1. 当前范围
 
-项目当前提供六类基础可观测能力：
+项目当前提供七类基础可观测能力：
 
 - `X-Request-ID`：每个请求生成或透传请求 ID。
 - `traceparent`：兼容 W3C Trace Context，生成或透传 `trace_id` 并创建服务端 `span_id`。
 - Access Log：记录 method、path、route、status、latency、client_ip、body_size、request_id、trace_id 和 span_id。
 - `/metrics`：输出 Prometheus 文本格式指标。
+- **`/debug/pprof`：Go 运行时性能剖析（默认关闭，独立回环端口）**——见 §7。
 - GORM 慢 SQL 日志：默认记录超过阈值的 SQL 和数据库错误。
 - Redis 库存对账日志：周期记录 Redis/MySQL 库存差异情况。
 
 当前没有接入 OpenTelemetry Collector 或完整追踪后端，也没有提供完整告警平台。本文只记录项目内已经实现的指标和可落地告警建议。
+
+> **`/metrics` 与 `/debug/pprof` 的分工**：前者回答「**有多快**」（RPS、延迟、错误率），后者回答「**时间花在哪段代码**」。
+> 两者不可互替——压测再准也只会给出总延迟，不会给出调用栈归因。
 
 ## 2. Trace Context
 
@@ -92,7 +96,67 @@ MySQL 初始化时会为 GORM 注入 `slog` logger，默认只输出慢查询和
 
 该 worker 不自动重建 Redis。差异修复仍需要管理员查看差异报告后手动触发重建。
 
-## 7. 告警建议
+## 7. 性能剖析（pprof）
+
+`/metrics` 与 `/debug/pprof` 是两类不同的观测，**不可互替**：前者给结果数字，后者给调用栈归因。
+
+### 7.1 开关与安全边界
+
+| 配置 | 默认值 | 环境变量 | 说明 |
+|---|---|---|---|
+| `pprof.enabled` | `false` | `PPROF_ENABLED` | **默认关闭**——剖析端点暴露 goroutine 栈与堆内容 |
+| `pprof.addr` | `127.0.0.1:6060` | `PPROF_ADDR` | **必须回环**，否则**启动失败** |
+
+两条硬约束（`config/config_validate.go` 实测）：
+
+- **`Addr` 用白名单校验**，只接受 `127.0.0.1` / `::1` / `localhost`。**不是**「拒绝 `0.0.0.0`」的黑名单——黑名单会放过 `[::]`、空 host、解析到别处的主机名，即 **fail open**。
+- **`Addr` 不得复用业务端口**。共用端口会让暴露面取决于哪个 handler 先命中。
+- **`PPROF_ENABLED` 必须是合法布尔值**。`maybe` 这类取值会让进程**启动失败**，而不是静默当 false——同 `REDIS_TLS` 的口径。
+
+### 7.2 为什么默认绑回环
+
+剖析端点不设鉴权（Go 运行时自带，不带认证）。因此**在云主机上开启它不会开出远程入口**。
+要剖析远程实例，走 SSH 隧道：
+
+```bash
+ssh -L 6060:127.0.0.1:6060 <host>
+# 然后把剖析器指向 http://127.0.0.1:6060
+```
+
+### 7.3 可用的剖析类型
+
+| 端点 | 用途 |
+|---|---|
+| `/debug/pprof/profile?seconds=30` | CPU 采样（默认 30s） |
+| `/debug/pprof/heap` | 堆内存（**单次快照**） |
+| `/debug/pprof/goroutine` | 协程栈 |
+| `/debug/pprof/allocs` | 累计分配 |
+| `/debug/pprof/block` · `mutex` | 阻塞 / 锁竞争（需 `runtime.SetBlockProfileRate`） |
+
+### 7.4 一次实测的结论（作为用法示例）
+
+`2026-10-23` 读链路压测（100,000 请求 / 50 并发 / 3073 RPS / P95 19ms）期间抓 30s CPU profile：
+
+```
+go tool pprof -peek='log/slog.(*Logger).LogAttrs' cpu.prof
+→ 27.12s  100% | router.SetupRouters.AccessLog.func5
+```
+
+**⇒ Access Log 中间件独占 22.2% CPU**（每请求构造 10 个 `slog.Attr` 并以 `Info` 级输出）。
+**这是取舍不是缺陷**：对排障它是资产，对吞吐它是读链路最大单项成本。
+
+> ⚠️ **同一份 profile 里 `runtime.cgocall` 占 39.3%，那是 Windows 特有的**——Go 在 Win32 上把 socket / 文件写走 `cgocall`，Linux 上形态不同。
+> **不得把该 CPU 分布当跨平台结论引用。**
+
+完整报告：`docs/evidence/pprof_report_2026-10-23.md`；原始制品：`docs/evidence/pprof-2026-10-23/*.prof`。
+
+### 7.5 边界（如实）
+
+- **只剖析过读链路**。下单事务、Redis Lua 预扣、RabbitMQ 超时取消链路**均未压**。
+- **heap 是单次快照**，故「无泄漏」的结论强度是「**未观察到累积**」，不是「已证明无泄漏」。
+- 压测 + 抓 profile 的流程**未进 CI**；只有本条的单元测试随 `go test ./...` 跑。
+
+## 8. 告警建议
 
 以下规则是运行建议，是否启用取决于部署环境中的 Prometheus 或其他采集系统。
 
@@ -106,8 +170,9 @@ MySQL 初始化时会为 GORM 注入 `slog` logger，默认只输出慢查询和
 | 慢 SQL 增多 | 查看应用日志中的 `gorm slow query` | 先按 `sql` 定位接口和表，再用 `EXPLAIN` 检查索引和扫描行数 |
 | Redis/MySQL 库存差异 | 查看应用日志中的 `inventory Redis reconcile found differences` | 调用管理员差异报告接口确认明细，再决定是否重建 Redis 可售库存 |
 
-## 8. 当前边界
+## 9. 当前边界
 
 - 已提供 `traceparent` 透传和 access log 关联，但暂未接入 OpenTelemetry 或分布式追踪后端。
 - 已提供慢 SQL 日志入口及本地 Docker 读链路压测和 EXPLAIN 报告；写链路和长期运行仍未覆盖。
+- 已提供 pprof 性能剖析（§7），但**只剖析过读链路**，且 **heap 为单次快照**。
 - 暂未提供 Prometheus 配置文件或线上告警截图证据。
